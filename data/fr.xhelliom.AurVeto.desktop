@@ -1,12 +1,12 @@
 [Desktop Entry]
 Type=Application
-Name=aur-guard
+Name=aurveto
 GenericName=Secure AUR updates
 GenericName[fr]=Mises à jour AUR sécurisées
 Comment=Vet AUR updates: delay, whitelist, static scan and AI review
 Comment[fr]=Vérifie les mises à jour AUR : délai, whitelist, scan et review IA
-Exec=aur-guard-gui
-Icon=fr.xhelliom.AurGuard
+Exec=aurveto-gui
+Icon=fr.xhelliom.AurVeto
 Terminal=false
 Categories=System;Security;PackageManager;
 Keywords=aur;arch;security;update;pkgbuild;

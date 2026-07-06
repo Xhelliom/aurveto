@@ -13,24 +13,24 @@ use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
 /// Application identifier (desktop entry, icon, metadata).
-const APP_ID: &str = "fr.xhelliom.AurGuard";
+const APP_ID: &str = "fr.xhelliom.AurVeto";
 /// Name of the CLI binary.
-const BIN_CLI: &str = "aur-guard";
+const BIN_CLI: &str = "aurveto";
 /// Name of the GUI binary (launched by the desktop entry).
-const BIN_GUI: &str = "aur-guard-gui";
+const BIN_GUI: &str = "aurveto-gui";
 /// Permissions of installed binaries (rwxr-xr-x).
 const BIN_MODE: u32 = 0o755;
 /// gettext domain (must match `i18n::init`).
-const GETTEXT_DOMAIN: &str = "aur-guard";
+const GETTEXT_DOMAIN: &str = "aurveto";
 /// Base name of the notification systemd units (`.service` / `.timer`).
-const NOTIFY_UNIT: &str = "aur-guard-notify";
+const NOTIFY_UNIT: &str = "aurveto-notify";
 /// Delay after boot before the first check.
 const NOTIFY_BOOT_DELAY: &str = "2min";
 
 /// Desktop entry and icon, embedded in the binary so the `install` command is
 /// self-contained (no need for the source tree at runtime).
-const DESKTOP_BYTES: &[u8] = include_bytes!("../data/fr.xhelliom.AurGuard.desktop");
-const ICON_BYTES: &[u8] = include_bytes!("../data/fr.xhelliom.AurGuard.svg");
+const DESKTOP_BYTES: &[u8] = include_bytes!("../data/fr.xhelliom.AurVeto.desktop");
+const ICON_BYTES: &[u8] = include_bytes!("../data/fr.xhelliom.AurVeto.svg");
 
 /// Source translation catalogs, compiled at install time via `msgfmt`.
 /// `(language_code, po_content)`.
@@ -55,7 +55,7 @@ fn current_exe() -> String {
         .unwrap_or_else(|| GETTEXT_DOMAIN.to_string())
 }
 
-/// Copies the binaries (`aur-guard`, and `aur-guard-gui` if it was built) into
+/// Copies the binaries (`aurveto`, and `aurveto-gui` if it was built) into
 /// the user executables directory (`~/.local/bin`).
 ///
 /// Returns `true` if the GUI binary is available afterwards (freshly copied or
@@ -124,7 +124,7 @@ fn installed_binary(name: &str) -> String {
         .unwrap_or_else(|| name.to_string())
 }
 
-/// Command to use to launch the `aur-guard` CLI binary, as an absolute path when
+/// Command to use to launch the `aurveto` CLI binary, as an absolute path when
 /// it is installed. Intended for frontends that start the CLI in an external
 /// terminal whose PATH does not include `~/.local/bin`.
 pub fn cli_command() -> String {
@@ -134,7 +134,7 @@ pub fn cli_command() -> String {
 /// Installs the desktop entry and icon into `~/.local/share`.
 ///
 /// Makes the application visible in the menu and associates its icon. The
-/// embedded `Exec` line (bare `aur-guard-gui`) is rewritten with the **absolute
+/// embedded `Exec` line (bare `aurveto-gui`) is rewritten with the **absolute
 /// path** of the installed binary: graphical launchers often do not have
 /// `~/.local/bin` in their PATH, so a bare command would not resolve there.
 pub fn install_desktop_entry() -> Result<()> {
@@ -209,7 +209,7 @@ pub fn apply_notify(cfg: &NotifyConfig) -> Result<()> {
 
     let service = format!(
         "[Unit]\n\
-         Description=aur-guard update notification\n\n\
+         Description=aurveto update notification\n\n\
          [Service]\n\
          Type=oneshot\n\
          ExecStart={exe} notify\n"
@@ -217,7 +217,7 @@ pub fn apply_notify(cfg: &NotifyConfig) -> Result<()> {
     let interval = cfg.interval_hours.max(1);
     let timer = format!(
         "[Unit]\n\
-         Description=aur-guard periodic update check\n\n\
+         Description=aurveto periodic update check\n\n\
          [Timer]\n\
          OnBootSec={NOTIFY_BOOT_DELAY}\n\
          OnUnitActiveSec={interval}h\n\
@@ -253,7 +253,7 @@ pub fn send_notification(cfg: &Config) -> Result<()> {
         notify_send(
             "normal",
             &t!("Updates available"),
-            &t!("{} repo + {} AUR (aur-guard upgrade)", official, aur),
+            &t!("{} repo + {} AUR (aurveto upgrade)", official, aur),
         );
     } else if !cfg.notify.silent_when_up_to_date {
         notify_send("low", &t!("System up to date"), &t!("No updates"));
@@ -267,7 +267,7 @@ pub fn send_notification(cfg: &Config) -> Result<()> {
 pub fn send_test_notification() {
     notify_send(
         "normal",
-        "aur-guard",
+        "aurveto",
         &t!("Test notification — if you see this, notifications work."),
     );
 }

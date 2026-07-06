@@ -1,11 +1,11 @@
 //! Internationalisation via gettext. The language follows the system locale.
 //! Source strings are in English (msgid); translations live in
-//! `po/<lang>.po`, compiled to `<datadir>/locale/<lang>/LC_MESSAGES/aur-guard.mo`.
+//! `po/<lang>.po`, compiled to `<datadir>/locale/<lang>/LC_MESSAGES/aurveto.mo`.
 
 use gettextrs::{bindtextdomain, setlocale, textdomain, LocaleCategory};
 use std::path::PathBuf;
 
-const DOMAIN: &str = "aur-guard";
+const DOMAIN: &str = "aurveto";
 
 /// Initialise gettext. Call once at the startup of each binary.
 pub fn init() {

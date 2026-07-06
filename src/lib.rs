@@ -1,4 +1,4 @@
-//! aur-guard core library, shared by the CLI, TUI and GUI frontends.
+//! aurveto core library, shared by the CLI, TUI and GUI frontends.
 
 pub mod ai;
 pub mod aur;

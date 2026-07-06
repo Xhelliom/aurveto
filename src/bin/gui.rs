@@ -1,4 +1,4 @@
-//! GTK4 / libadwaita graphical interface for aur-guard.
+//! GTK4 / libadwaita graphical interface for aurveto.
 //!
 //! Main view: the AUR updates (check + verdicts + apply).
 //! The settings live in a separate dialog (gear button).
@@ -12,11 +12,11 @@ use gtk4::{glib, Adjustment, Orientation, StringList};
 use libadwaita as adw;
 use libadwaita::prelude::*;
 
-use aur_guard::config::{Config, DelayMode, Provider, Secrets};
-use aur_guard::pipeline::{self, Decision, Outcome};
-use aur_guard::{aur, deploy, t};
+use aurveto::config::{Config, DelayMode, Provider, Secrets};
+use aurveto::pipeline::{self, Decision, Outcome};
+use aurveto::{aur, deploy, t};
 
-const APP_ID: &str = "fr.xhelliom.AurGuard";
+const APP_ID: &str = "fr.xhelliom.AurVeto";
 
 /// RGB color (0..1) of a distribution-bar segment / a swatch.
 type Rgb = (f64, f64, f64);
@@ -45,7 +45,7 @@ const BADGE_CSS: &str = "\
 ";
 
 fn main() -> glib::ExitCode {
-    aur_guard::i18n::init();
+    aurveto::i18n::init();
     let app = adw::Application::builder().application_id(APP_ID).build();
     app.connect_activate(build_ui);
     app.run()
@@ -85,7 +85,7 @@ fn build_ui(app: &adw::Application) {
 
     let window = adw::ApplicationWindow::builder()
         .application(app)
-        .title("aur-guard")
+        .title("aurveto")
         .default_width(560)
         .default_height(720)
         .build();
@@ -164,7 +164,7 @@ fn build_ui(app: &adw::Application) {
 
     // Navigation stack: "updates" at the root; the settings are pushed as a
     // full-screen page (rather than a floating dialog).
-    let updates_page = adw::NavigationPage::new(&toolbar, "aur-guard");
+    let updates_page = adw::NavigationPage::new(&toolbar, "aurveto");
     let nav = adw::NavigationView::new();
     nav.add(&updates_page);
 
@@ -355,7 +355,7 @@ fn render(
     apply_btn.set_sensitive(!selected.borrow().is_empty());
 }
 
-/// Wires the "Update selection" button: runs `aur-guard apply` (AUR packages
+/// Wires the "Update selection" button: runs `aurveto apply` (AUR packages
 /// only, without touching the official repos) restricted to the checked
 /// packages. The CLI re-evaluates the decision chain at install time: the
 /// selection bypasses no guard, it only narrows.
@@ -386,7 +386,7 @@ fn wire_apply(
     });
 }
 
-/// Wires the "Update everything" button: runs `aur-guard upgrade` in a terminal
+/// Wires the "Update everything" button: runs `aurveto upgrade` in a terminal
 /// (official repos via pacman -Syu then safe AUR packages).
 fn wire_upgrade(upgrade_btn: &gtk::Button, overlay: &adw::ToastOverlay) {
     let overlay = overlay.clone();

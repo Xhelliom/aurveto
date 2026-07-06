@@ -40,7 +40,7 @@ jobs:
       - name: Deploy to the AUR
         uses: KSXGitHub/github-actions-deploy-aur@v2.7.2
         with:
-          pkgname: aur-guard
+          pkgname: aurveto
           pkgbuild: packaging/aur/PKGBUILD
           updpkgsums: true
           commit_username: ${{ secrets.AUR_USERNAME }}

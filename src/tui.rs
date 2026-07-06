@@ -419,8 +419,8 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
         .split(f.area());
 
     let header = match app.screen {
-        Screen::Main => t!("aur-guard — settings"),
-        Screen::Whitelist => t!("aur-guard — whitelist"),
+        Screen::Main => t!("aurveto — settings"),
+        Screen::Whitelist => t!("aurveto — whitelist"),
     };
     let title = Paragraph::new(header)
         .style(Style::default().add_modifier(Modifier::BOLD))

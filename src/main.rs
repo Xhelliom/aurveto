@@ -1,12 +1,12 @@
-//! aur-guard — security gate for AUR updates.
+//! aurveto — security gate for AUR updates.
 //!
 //! Per-package decision chain: whitelist -> delay (LastModified) ->
 //! static scan (aur-scan) -> AI review of the PKGBUILD diff.
 
 use anyhow::Result;
-use aur_guard::aur::SECS_PER_DAY;
-use aur_guard::pipeline::{Decision, Outcome};
-use aur_guard::{ai, aur, config, pipeline, scan, t};
+use aurveto::aur::SECS_PER_DAY;
+use aurveto::pipeline::{Decision, Outcome};
+use aurveto::{ai, aur, config, pipeline, scan, t};
 use clap::{Parser, Subcommand};
 use std::process::Command;
 
@@ -15,7 +15,7 @@ const SHORT_HASH_LEN: usize = 7;
 
 #[derive(Parser)]
 #[command(
-    name = "aur-guard",
+    name = "aurveto",
     version,
     about = "Secure AUR updates: delay, whitelist, static scan and AI review"
 )]
@@ -70,7 +70,7 @@ enum Cmd {
 }
 
 fn main() {
-    aur_guard::i18n::init();
+    aurveto::i18n::init();
     if let Err(e) = run() {
         eprintln!("{}: {e:#}", t!("error"));
         std::process::exit(1);
@@ -88,11 +88,11 @@ fn run() -> Result<()> {
         Cmd::Install => cmd_install(),
         Cmd::Notify { test } => {
             if test {
-                aur_guard::deploy::send_test_notification();
+                aurveto::deploy::send_test_notification();
                 Ok(())
             } else {
                 let cfg = config::Config::load_or_init()?;
-                aur_guard::deploy::send_notification(&cfg)
+                aurveto::deploy::send_notification(&cfg)
             }
         }
         Cmd::ReviewFile { path } => cmd_review_file(&path),
@@ -109,7 +109,7 @@ fn run() -> Result<()> {
         #[cfg(feature = "tui")]
         Cmd::ConfigUi => {
             let cfg = config::Config::load_or_init()?;
-            aur_guard::tui::run(cfg)
+            aurveto::tui::run(cfg)
         }
     }
 }
@@ -141,7 +141,7 @@ fn cmd_check() -> Result<()> {
     Ok(())
 }
 
-/// List the pending official-repo updates (signed, out of aur-guard's scope but
+/// List the pending official-repo updates (signed, out of aurveto's scope but
 /// shown for a complete picture). Each line is `name old -> new`.
 fn print_official_summary() {
     let updates = aur::official_updates();
@@ -151,7 +151,7 @@ fn print_official_summary() {
     println!(
         "{}",
         t!(
-            "Official repositories: {} signed updates (handled by `aur-guard upgrade`)",
+            "Official repositories: {} signed updates (handled by `aurveto upgrade`)",
             updates.len()
         )
     );
@@ -168,10 +168,7 @@ fn cmd_upgrade() -> Result<()> {
     if !status.success() {
         anyhow::bail!(t!("pacman -Syu failed — AUR update not started"));
     }
-    println!(
-        "\n=== {} ===",
-        t!("AUR packages (aur-guard security chain)")
-    );
+    println!("\n=== {} ===", t!("AUR packages (aurveto security chain)"));
     cmd_apply(false, &[])
 }
 
@@ -367,13 +364,13 @@ fn cmd_config() -> Result<()> {
 fn cmd_install() -> Result<()> {
     let cfg = config::Config::load_or_init()?;
 
-    let gui_available = aur_guard::deploy::install_binaries()?;
+    let gui_available = aurveto::deploy::install_binaries()?;
     println!("{}", t!("Binaries installed in ~/.local/bin."));
 
     // The menu entry launches the GUI: only install it when the GUI is
     // available, otherwise the shortcut would point to nothing.
     if gui_available {
-        aur_guard::deploy::install_desktop_entry()?;
+        aurveto::deploy::install_desktop_entry()?;
         println!("{}", t!("Desktop entry and icon installed."));
     } else {
         println!(
@@ -382,10 +379,10 @@ fn cmd_install() -> Result<()> {
         );
     }
 
-    aur_guard::deploy::install_locales()?;
+    aurveto::deploy::install_locales()?;
     println!("{}", t!("Translations installed."));
 
-    aur_guard::deploy::apply_notify(&cfg.notify)?;
+    aurveto::deploy::apply_notify(&cfg.notify)?;
     if cfg.notify.enabled {
         println!(
             "{}",

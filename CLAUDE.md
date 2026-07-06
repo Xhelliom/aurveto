@@ -1,4 +1,4 @@
-# CLAUDE.md — aur-guard development guide
+# CLAUDE.md — aurveto development guide
 
 Instructions for anyone (or any agent) modifying this repository. Read before
 writing code. The rules below **take precedence** over default habits.
@@ -11,7 +11,7 @@ AI review** decides whether to install, delay, or block.
 
 ## Architecture
 
-A library core (`src/lib.rs`, crate `aur_guard`), shared by three
+A library core (`src/lib.rs`, crate `aurveto`), shared by three
 frontends. **All business logic lives in the lib; the frontends only
 present and delegate.**
 

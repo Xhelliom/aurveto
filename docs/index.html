@@ -3,9 +3,9 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>aur-guard — Secure your AUR updates</title>
+<title>aurveto — Secure your AUR updates</title>
 <meta name="description" content="A security gate for Arch's AUR. Time-delay, whitelist, anti-revert guard, static scan and AI review of PKGBUILD diffs — before anything is built. CLI, TUI and GTK4 app.">
-<meta property="og:title" content="aur-guard — Secure your AUR updates">
+<meta property="og:title" content="aurveto — Secure your AUR updates">
 <meta property="og:description" content="Whitelist → delay → anti-revert → static scan → AI review. The supply-chain gate the AUR was missing.">
 <meta property="og:type" content="website">
 <link rel="icon" type="image/svg+xml" href="assets/logo.svg">
@@ -163,12 +163,12 @@ footer { border-top: 1px solid var(--border); padding: 44px 0; color: var(--text
 
 <nav>
   <div class="container nav-inner">
-    <a class="brand" href="#"><img src="assets/logo.svg" alt="aur-guard logo">aur-guard</a>
+    <a class="brand" href="#"><img src="assets/logo.svg" alt="aurveto logo">aurveto</a>
     <div class="nav-links">
       <a href="#chain">How it works</a>
       <a href="#features">Features</a>
       <a href="#install">Install</a>
-      <a href="https://github.com/Xhelliom/aur-guard" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://github.com/Xhelliom/aurveto" target="_blank" rel="noopener">GitHub</a>
       <button id="theme-toggle" aria-label="Toggle theme">🌙</button>
     </div>
   </div>
@@ -181,7 +181,7 @@ footer { border-top: 1px solid var(--border); padding: 44px 0; color: var(--text
     <p class="lead">A security gate that vets every AUR package before it is built — time-delay, whitelist, anti-revert guard, static scan and AI review of the PKGBUILD diff.</p>
     <div class="cta-row">
       <a class="btn btn-primary" href="#install">⬇ Install</a>
-      <a class="btn btn-ghost" href="https://github.com/Xhelliom/aur-guard" target="_blank" rel="noopener">★ Star on GitHub</a>
+      <a class="btn btn-ghost" href="https://github.com/Xhelliom/aurveto" target="_blank" rel="noopener">★ Star on GitHub</a>
     </div>
     <div class="badges">
       <span class="badge">Rust</span>
@@ -195,7 +195,7 @@ footer { border-top: 1px solid var(--border); padding: 44px 0; color: var(--text
 <div class="threat">
   <div class="container">
     <span class="em">⚠️</span>
-    <p><strong>June 2026:</strong> 400+ AUR packages were backdoored in a supply-chain attack — malicious PKGBUILDs silently fetching and running an infostealer. AUR packages are <strong>unsigned, community-maintained recipes</strong> built on your machine. aur-guard puts a gate in front of them.</p>
+    <p><strong>June 2026:</strong> 400+ AUR packages were backdoored in a supply-chain attack — malicious PKGBUILDs silently fetching and running an infostealer. AUR packages are <strong>unsigned, community-maintained recipes</strong> built on your machine. aurveto puts a gate in front of them.</p>
   </div>
 </div>
 
@@ -227,11 +227,11 @@ footer { border-top: 1px solid var(--border); padding: 44px 0; color: var(--text
     <div class="term reveal">
       <div class="term-bar">
         <span class="dot" style="background:#ff5f57"></span><span class="dot" style="background:#febc2e"></span><span class="dot" style="background:#28c840"></span>
-        <span class="term-title">aur-guard check</span>
+        <span class="term-title">aurveto check</span>
       </div>
-<div class="term-body"><span class="mut">$</span> <span class="pr">aur-guard</span> check
+<div class="term-body"><span class="mut">$</span> <span class="pr">aurveto</span> check
 
-Official repositories: 138 signed updates (handled by `aur-guard upgrade`)
+Official repositories: 138 signed updates (handled by `aurveto upgrade`)
 
 AUR updates: 5 (delay 14d, AI review enabled)
 
@@ -253,7 +253,7 @@ AUR updates: 5 (delay 14d, AI review enabled)
     <div class="grid">
       <div class="card reveal"><div class="icon">⏳</div><h3>True deferred updates</h3><p>Lag mode builds the exact git revision that was public N days ago — you always get updates, just safely behind.</p></div>
       <div class="card reveal"><div class="icon">🧠</div><h3>AI review, multi-vote</h3><p>Groq, Anthropic or OpenAI — configurable. One call when safe; extra confirmation votes only to back up a block.</p></div>
-      <div class="card reveal"><div class="icon">🔑</div><h3>One safe entry point</h3><p><code>aur-guard upgrade</code> does <code>pacman -Syu</code> then the guarded AUR — so you never bypass the gate.</p></div>
+      <div class="card reveal"><div class="icon">🔑</div><h3>One safe entry point</h3><p><code>aurveto upgrade</code> does <code>pacman -Syu</code> then the guarded AUR — so you never bypass the gate.</p></div>
       <div class="card reveal"><div class="icon">🖥️</div><h3>CLI, TUI &amp; GTK4</h3><p>Scriptable CLI, a keyboard TUI, and a polished libadwaita app with editable whitelist and suggestions.</p></div>
       <div class="card reveal"><div class="icon">🌍</div><h3>Multilingual</h3><p>gettext-based i18n following your system locale. English and French included, more easy to add.</p></div>
       <div class="card reveal"><div class="icon">🔐</div><h3>Secrets stay secret</h3><p>API keys come from the environment or a <code>0600</code> file — never written to config or logs.</p></div>
@@ -264,33 +264,33 @@ AUR updates: 5 (delay 14d, AI review enabled)
 <section id="install">
   <div class="container">
     <h2 class="section-title reveal">Install</h2>
-    <p class="section-sub reveal">Requires Rust, an AUR helper (yay/paru) and — optionally — <code>aur-scan</code> for the static layer. One <code>aur-guard install</code> drops the binaries, a desktop entry and an optional update-notification timer into place.</p>
+    <p class="section-sub reveal">Requires Rust, an AUR helper (yay/paru) and — optionally — <code>aur-scan</code> for the static layer. One <code>aurveto install</code> drops the binaries, a desktop entry and an optional update-notification timer into place.</p>
     <div class="install-card reveal">
 <div class="code"><span class="c"># clone &amp; build</span>
-git clone https://github.com/Xhelliom/aur-guard
-cd aur-guard
+git clone https://github.com/Xhelliom/aurveto
+cd aurveto
 cargo build <span class="a">--release</span>
 
 <span class="c"># one-stop: binaries, menu entry, icon, translations, notify timer</span>
-./target/release/aur-guard <span class="a">install</span>
+./target/release/aurveto <span class="a">install</span>
 
 <span class="c"># use it</span>
-aur-guard check          <span class="c"># report — installs nothing</span>
-aur-guard upgrade        <span class="c"># official repos + safe AUR</span></div>
+aurveto check          <span class="c"># report — installs nothing</span>
+aurveto upgrade        <span class="c"># official repos + safe AUR</span></div>
     </div>
   </div>
 </section>
 
 <footer>
   <div class="container footer-inner">
-    <span>aur-guard — MIT licensed. Built for Arch, against supply-chain attacks.</span>
-    <span><a href="https://github.com/Xhelliom/aur-guard" target="_blank" rel="noopener">github.com/Xhelliom/aur-guard</a></span>
+    <span>aurveto — MIT licensed. Built for Arch, against supply-chain attacks.</span>
+    <span><a href="https://github.com/Xhelliom/aurveto" target="_blank" rel="noopener">github.com/Xhelliom/aurveto</a></span>
   </div>
 </footer>
 
 <script>
 (function () {
-  var saved = localStorage.getItem("aurguard-theme");
+  var saved = localStorage.getItem("aurveto-theme");
   var theme = saved || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
   function apply(t) {
     document.documentElement.setAttribute("data-theme", t);
@@ -299,7 +299,7 @@ aur-guard upgrade        <span class="c"># official repos + safe AUR</span></div
   apply(theme);
   document.getElementById("theme-toggle").addEventListener("click", function () {
     theme = theme === "dark" ? "light" : "dark";
-    localStorage.setItem("aurguard-theme", theme);
+    localStorage.setItem("aurveto-theme", theme);
     apply(theme);
   });
 

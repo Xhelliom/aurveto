@@ -1,7 +1,7 @@
-# French translation for aur-guard.
+# French translation for aurveto.
 msgid ""
 msgstr ""
-"Project-Id-Version: aur-guard\n"
+"Project-Id-Version: aurveto\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
@@ -30,8 +30,8 @@ msgstr "sévérité"
 msgid "summary"
 msgstr "résumé"
 
-msgid "Official repositories: {} signed updates (handled by `aur-guard upgrade`)"
-msgstr "Dépôts officiels : {} mises à jour signées (gérées par `aur-guard upgrade`)"
+msgid "Official repositories: {} signed updates (handled by `aurveto upgrade`)"
+msgstr "Dépôts officiels : {} mises à jour signées (gérées par `aurveto upgrade`)"
 
 msgid "Official repositories (pacman -Syu)"
 msgstr "Dépôts officiels (pacman -Syu)"
@@ -39,8 +39,8 @@ msgstr "Dépôts officiels (pacman -Syu)"
 msgid "pacman -Syu failed — AUR update not started"
 msgstr "pacman -Syu a échoué — mise à jour AUR non lancée"
 
-msgid "AUR packages (aur-guard security chain)"
-msgstr "Paquets AUR (chaîne de sécurité aur-guard)"
+msgid "AUR packages (aurveto security chain)"
+msgstr "Paquets AUR (chaîne de sécurité aurveto)"
 
 msgid "Nothing to install."
 msgstr "Rien à installer."
@@ -431,11 +431,11 @@ msgstr "✔ Configuration enregistrée"
 msgid "Save error: {}"
 msgstr "Erreur sauvegarde : {}"
 
-msgid "aur-guard — settings"
-msgstr "aur-guard — configuration"
+msgid "aurveto — settings"
+msgstr "aurveto — configuration"
 
-msgid "aur-guard — whitelist"
-msgstr "aur-guard — whitelist"
+msgid "aurveto — whitelist"
+msgstr "aurveto — whitelist"
 
 msgid " settings "
 msgstr " réglages "
@@ -459,8 +459,8 @@ msgstr "échec de systemctl --user {}"
 msgid "systemctl not found — notification timer not applied"
 msgstr "systemctl introuvable — timer de notification non appliqué"
 
-msgid "{} repo + {} AUR (aur-guard upgrade)"
-msgstr "{} dépôts + {} AUR (aur-guard upgrade)"
+msgid "{} repo + {} AUR (aurveto upgrade)"
+msgstr "{} dépôts + {} AUR (aurveto upgrade)"
 
 #: src/main.rs
 msgid "Desktop entry and icon installed."

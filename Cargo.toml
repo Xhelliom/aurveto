@@ -1,21 +1,21 @@
 [package]
-name = "aur-guard"
+name = "aurveto"
 version = "0.2.0"
 edition = "2021"
 description = "Security gate for AUR updates: delay, whitelist, static scan and AI review of the PKGBUILD diff"
 license = "MIT"
-repository = "https://github.com/Xhelliom/aur-guard"
+repository = "https://github.com/Xhelliom/aurveto"
 
 [lib]
-name = "aur_guard"
+name = "aurveto"
 path = "src/lib.rs"
 
 [[bin]]
-name = "aur-guard"
+name = "aurveto"
 path = "src/main.rs"
 
 [[bin]]
-name = "aur-guard-gui"
+name = "aurveto-gui"
 path = "src/bin/gui.rs"
 required-features = ["gui"]
 

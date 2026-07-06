@@ -3,7 +3,7 @@
 # Usage: po/install.sh [prefix]   (default prefix: $XDG_DATA_HOME or ~/.local/share)
 set -euo pipefail
 
-DOMAIN=aur-guard
+DOMAIN=aurveto
 here="$(cd "$(dirname "$0")" && pwd)"
 prefix="${1:-${XDG_DATA_HOME:-$HOME/.local/share}}"
 

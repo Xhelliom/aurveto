@@ -1,5 +1,5 @@
-//! aur-guard configuration: delay, whitelist and AI review settings.
-//! The file lives at ~/.config/aur-guard/config.toml and is created with
+//! aurveto configuration: delay, whitelist and AI review settings.
+//! The file lives at ~/.config/aurveto/config.toml and is created with
 //! default values on first launch.
 
 use crate::t;
@@ -126,7 +126,7 @@ fn default_notify_interval() -> u64 {
 
 /// Desktop notification settings (systemd `--user` timer).
 ///
-/// The timer runs `aur-guard notify`, which counts the available official and
+/// The timer runs `aurveto notify`, which counts the available official and
 /// AUR updates (without the AI review, hence at no cost) and calls `notify-send`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NotifyConfig {
@@ -215,7 +215,7 @@ impl Config {
     /// Path of the configuration file.
     pub fn path() -> Result<PathBuf> {
         let base = dirs::config_dir().context("cannot resolve ~/.config")?;
-        Ok(base.join("aur-guard").join("config.toml"))
+        Ok(base.join("aurveto").join("config.toml"))
     }
 
     /// Loads the config, creating a default file if missing.
@@ -264,7 +264,7 @@ pub struct Secrets {
 impl Secrets {
     pub fn path() -> Result<PathBuf> {
         let base = dirs::config_dir().context("cannot resolve ~/.config")?;
-        Ok(base.join("aur-guard").join("secrets.toml"))
+        Ok(base.join("aurveto").join("secrets.toml"))
     }
 
     /// Loads the secrets (empty struct if the file is missing).

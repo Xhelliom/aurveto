@@ -251,7 +251,7 @@ fn scan_lagged(name: &str, pkgbuild: &str, enabled: bool) -> ScanResult {
     if !enabled {
         return ScanResult::Skipped;
     }
-    let path = std::env::temp_dir().join(format!("aur-guard-{name}.PKGBUILD"));
+    let path = std::env::temp_dir().join(format!("aurveto-{name}.PKGBUILD"));
     if std::fs::write(&path, pkgbuild).is_err() {
         return ScanResult::Skipped;
     }

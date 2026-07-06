@@ -17,7 +17,7 @@ pub const DYNAMIC_VERSION: &str = "?";
 /// AUR host (RPC API, git repositories, raw PKGBUILDs).
 const AUR_HOST: &str = "https://aur.archlinux.org";
 /// User-Agent sent on HTTP requests to the AUR.
-const USER_AGENT: &str = "aur-guard";
+const USER_AGENT: &str = "aurveto";
 /// Maximum number of packages per RPC request (bounds the URL length).
 const RPC_BATCH: usize = 50;
 
@@ -125,7 +125,7 @@ pub fn fetch_infos(names: &[String]) -> Result<HashMap<String, PkgInfo>> {
 
 /// Lists official-repo updates via `checkupdates`
 /// (format "name old -> new"). These packages are signed and outside
-/// aur-guard's review scope.
+/// aurveto's review scope.
 pub fn official_updates() -> Vec<String> {
     Command::new("checkupdates")
         .output()
@@ -246,7 +246,7 @@ pub struct LagTarget {
 
 fn aur_cache_dir() -> Result<PathBuf> {
     let base = dirs::cache_dir().context("cache dir not found")?;
-    Ok(base.join("aur-guard").join("git"))
+    Ok(base.join("aurveto").join("git"))
 }
 
 fn run_git(dir: &Path, args: &[&str]) -> Result<String> {

@@ -1,11 +1,11 @@
-# aur-guard
+# aurveto
 
 A security guardrail for AUR updates. Born after the mass AUR compromise of
 June 2026: rather than blindly installing the latest version of an AUR package,
-`aur-guard` applies a decision chain before every update.
+`aurveto` applies a decision chain before every update.
 
 > 🌐 **First visit? Start with the overview page:
-> [xhelliom.github.io/aur-guard](https://xhelliom.github.io/aur-guard/)** — an
+> [xhelliom.github.io/aurveto](https://xhelliom.github.io/aurveto/)** — an
 > illustrated overview of the project, its interfaces, and its philosophy.
 > The rest of this README is the technical documentation.
 
@@ -48,32 +48,32 @@ positives caused by the model's non-determinism.
 
 Three frontends share the same core:
 
-- **CLI** — `aur-guard <command>`
-- **TUI** (terminal, ratatui) — `aur-guard config-ui`
-- **GUI** (GTK4 / libadwaita) — `aur-guard-gui` binary: editable settings +
+- **CLI** — `aurveto <command>`
+- **TUI** (terminal, ratatui) — `aurveto config-ui`
+- **GUI** (GTK4 / libadwaita) — `aurveto-gui` binary: editable settings +
   update report (✅ safe / ⏳ delayed / ⛔ blocked) + installation.
 
-aur-guard **only handles AUR packages** (the unverified content). The official
+aurveto **only handles AUR packages** (the unverified content). The official
 Arch repositories are signed and out of its scope. To avoid updating them
 separately (and bypassing the AUR review with a `yay -Syu`), the `upgrade`
 command chains both: `pacman -Syu` then the safe AUR packages.
 
 ```bash
-aur-guard            # report (alias of `check`), installs nothing
-aur-guard check      # same (+ reminder of the number of official updates)
-aur-guard upgrade    # official repos (pacman -Syu) THEN safe AUR packages
-aur-guard apply      # only the AUR packages judged safe
-aur-guard apply --dry-run
-aur-guard status     # age (last AUR change) of all installed AUR packages
-aur-guard config     # path + summary of the configuration
-aur-guard config-ui  # terminal settings interface (TUI)
-aur-guard install   # desktop entry + icon + translations + notification timer
-aur-guard review-file <PKGBUILD>  # (debug) AI review of a file
+aurveto            # report (alias of `check`), installs nothing
+aurveto check      # same (+ reminder of the number of official updates)
+aurveto upgrade    # official repos (pacman -Syu) THEN safe AUR packages
+aurveto apply      # only the AUR packages judged safe
+aurveto apply --dry-run
+aurveto status     # age (last AUR change) of all installed AUR packages
+aurveto config     # path + summary of the configuration
+aurveto config-ui  # terminal settings interface (TUI)
+aurveto install    # desktop entry + icon + translations + notification timer
+aurveto review-file <PKGBUILD>  # (debug) AI review of a file
 ```
 
 ## Configuration
 
-`~/.config/aur-guard/config.toml` (created on first launch):
+`~/.config/aurveto/config.toml` (created on first launch):
 
 ```toml
 delay_days = 14
@@ -96,7 +96,7 @@ silent_when_up_to_date = true
 
 The API key is **never** stored in `config.toml`. It is resolved from the
 provider's environment variable first, otherwise from a dedicated file
-`~/.config/aur-guard/secrets.toml` (permissions `0600`), which can be filled in
+`~/.config/aurveto/secrets.toml` (permissions `0600`), which can be filled in
 from the interfaces (GUI/TUI).
 
 ## Settings interfaces
@@ -105,13 +105,13 @@ The GUI puts **updates on the home page** and groups the settings into a
 separate **full-screen page** (gear button → navigation): delay/mode/helper/scan,
 AI review (provider, **model**, **API key**, votes), the **whitelist** (editing +
 suggestions from installed AUR packages), and **notifications** (enabling,
-interval). The TUI (`aur-guard config-ui`) offers the same settings via keyboard.
+interval). The TUI (`aurveto config-ui`) offers the same settings via keyboard.
 
 ## Desktop integration and notifications
 
-`aur-guard install` installs the menu entry (`.desktop`), the icon, and the
+`aurveto install` installs the menu entry (`.desktop`), the icon, and the
 translations, then sets up a systemd `--user` timer
-(`aur-guard-notify.timer`) that periodically runs `aur-guard notify`: it
+(`aurveto-notify.timer`) that periodically runs `aurveto notify`: it
 **counts** the available official and AUR updates (without scan or AI review, so
 without API cost) and sends a notification via `notify-send`. Enabling and the
 interval are set from the GUI/TUI or the `[notify]` section of `config.toml`;
@@ -136,7 +136,7 @@ cargo build --release
 # All-in-one: copies the binaries (~/.local/bin), installs the menu entry +
 # icon (Exec as an absolute path), installs the translations and the
 # notification timer. Run from the built tree:
-./target/release/aur-guard install
+./target/release/aurveto install
 
 # Variant without GUI (headless machine / CLI only):
 cargo build --release --no-default-features --features tui
