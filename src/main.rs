@@ -27,7 +27,11 @@ struct Cli {
 #[derive(Subcommand)]
 enum Cmd {
     /// Report: evaluate available updates without installing anything (default).
-    Check,
+    Check {
+        /// Show the AI reviewer's explanation for each reviewed package.
+        #[arg(long)]
+        explain: bool,
+    },
     /// Install AUR packages judged safe (does not touch official repos).
     Apply {
         /// Restrict to these package names (a subset of those cleared for
@@ -36,9 +40,16 @@ enum Cmd {
         /// Do not install; only show the command that would run.
         #[arg(long)]
         dry_run: bool,
+        /// Show the AI reviewer's explanation for each reviewed package.
+        #[arg(long)]
+        explain: bool,
     },
     /// Update EVERYTHING: official repos (pacman -Syu) then safe AUR packages.
-    Upgrade,
+    Upgrade {
+        /// Show the AI reviewer's explanation for each reviewed package.
+        #[arg(long)]
+        explain: bool,
+    },
     /// Show the age (last AUR modification) of every installed AUR package.
     Status,
     /// Show the config file path (and create it if missing).
@@ -79,10 +90,14 @@ fn main() {
 
 fn run() -> Result<()> {
     let cli = Cli::parse();
-    match cli.cmd.unwrap_or(Cmd::Check) {
-        Cmd::Check => cmd_check(),
-        Cmd::Apply { dry_run, packages } => cmd_apply(dry_run, &packages),
-        Cmd::Upgrade => cmd_upgrade(),
+    match cli.cmd.unwrap_or(Cmd::Check { explain: false }) {
+        Cmd::Check { explain } => cmd_check(explain),
+        Cmd::Apply {
+            dry_run,
+            packages,
+            explain,
+        } => cmd_apply(dry_run, &packages, explain),
+        Cmd::Upgrade { explain } => cmd_upgrade(explain),
         Cmd::Status => cmd_status(),
         Cmd::Config => cmd_config(),
         Cmd::Install => cmd_install(),
@@ -133,11 +148,11 @@ fn cmd_review_file(path: &str) -> Result<()> {
     Ok(())
 }
 
-fn cmd_check() -> Result<()> {
+fn cmd_check(explain: bool) -> Result<()> {
     let cfg = config::Config::load_or_init()?;
     print_official_summary();
     let outcomes = pipeline::evaluate(&cfg)?;
-    print_report(&cfg, &outcomes);
+    print_report(&cfg, &outcomes, explain);
     Ok(())
 }
 
@@ -162,14 +177,14 @@ fn print_official_summary() {
 }
 
 /// Update the official repos then the safe AUR packages.
-fn cmd_upgrade() -> Result<()> {
+fn cmd_upgrade(explain: bool) -> Result<()> {
     println!("=== {} ===", t!("Official repositories (pacman -Syu)"));
     let status = Command::new("sudo").args(["pacman", "-Syu"]).status()?;
     if !status.success() {
         anyhow::bail!(t!("pacman -Syu failed — AUR update not started"));
     }
     println!("\n=== {} ===", t!("AUR packages (aurveto security chain)"));
-    cmd_apply(false, &[])
+    cmd_apply(false, &[], explain)
 }
 
 /// Restricts the cleared set to the explicitly requested package names.
@@ -206,10 +221,10 @@ fn select_requested<'a>(
         .collect()
 }
 
-fn cmd_apply(dry_run: bool, only: &[String]) -> Result<()> {
+fn cmd_apply(dry_run: bool, only: &[String], explain: bool) -> Result<()> {
     let cfg = config::Config::load_or_init()?;
     let outcomes = pipeline::evaluate(&cfg)?;
-    print_report(&cfg, &outcomes);
+    print_report(&cfg, &outcomes, explain);
 
     let mut allow: Vec<&Outcome> = outcomes
         .iter()
@@ -400,7 +415,7 @@ fn cmd_install() -> Result<()> {
     Ok(())
 }
 
-fn print_report(cfg: &config::Config, outcomes: &[Outcome]) {
+fn print_report(cfg: &config::Config, outcomes: &[Outcome], explain: bool) {
     if outcomes.is_empty() {
         println!("{}", t!("No AUR updates available."));
         return;
@@ -444,6 +459,11 @@ fn print_report(cfg: &config::Config, outcomes: &[Outcome]) {
                 t!("⛔ BLOCKED — {}", reason)
             }
         };
+        let tag = if o.ai_note.is_some() {
+            format!("{tag} {}", t!("[AI reviewed]"))
+        } else {
+            tag
+        };
         let ver = match &o.lag {
             // Lag mode: show the target version (revision D-N), not the latest.
             Some(target) if !o.update.old_ver.is_empty() => format!(
@@ -460,6 +480,11 @@ fn print_report(cfg: &config::Config, outcomes: &[Outcome]) {
             },
         };
         println!("  {:<28} {:<26} {tag}", o.update.name, ver);
+        if explain {
+            if let Some(note) = &o.ai_note {
+                println!("      {} {note}", t!("↳ AI:"));
+            }
+        }
     }
     println!(
         "\n{}",
