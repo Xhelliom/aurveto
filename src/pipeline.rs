@@ -35,6 +35,40 @@ pub struct Outcome {
     /// Version that will actually be installed at `eligible_at` (in lag mode, the
     /// maturing revision — not necessarily the latest published). `None` if unknown.
     pub eligible_version: Option<String>,
+    /// The AI reviewer's own explanation, whenever it ran (allowed or blocked).
+    /// `None` when the AI review was skipped (disabled, empty diff, or call error).
+    pub ai_note: Option<String>,
+    /// The decision chain's per-step breakdown (whitelist / delay / anti-revert /
+    /// scan / AI), in order. Populated when the chain actually ran (allowed or
+    /// blocked by scan/AI/revert); empty for a plain delay. The frontends render
+    /// it verbatim and never re-derive why a package was cleared or blocked.
+    pub steps: Vec<ChainStep>,
+}
+
+/// Status of one decision-chain link, for the frontends' per-package breakdown.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StepStatus {
+    /// The guard ran and cleared the package.
+    Passed,
+    /// The guard did not run (disabled, not applicable, or unavailable).
+    Skipped,
+    /// The guard rejected the package — this link produced the block.
+    Failed,
+}
+
+/// One link of the decision chain, with a human-readable note. Built by the
+/// pipeline so the frontends only present it.
+#[derive(Debug, Clone)]
+pub struct ChainStep {
+    pub name: String,
+    pub status: StepStatus,
+    pub note: String,
+}
+
+impl ChainStep {
+    fn new(name: String, status: StepStatus, note: String) -> Self {
+        Self { name, status, note }
+    }
 }
 
 /// Evaluates all available updates according to the config.
@@ -133,7 +167,7 @@ fn evaluate_lag(
     match aur::reverted_since(&target.pkgbase, &target.commit) {
         Ok(Some(reason)) => {
             let decision = Decision::Blocked(t!("revision reverted since — {}", reason));
-            return outcome(
+            let mut o = outcome(
                 upd,
                 age_days,
                 false,
@@ -141,6 +175,11 @@ fn evaluate_lag(
                 Some(target),
                 decision,
             );
+            o.steps = vec![
+                lag_delay_step(cfg),
+                ChainStep::new(t!("Anti-revert"), StepStatus::Failed, reason),
+            ];
+            return o;
         }
         Ok(None) => {}
         Err(e) => eprintln!("  (revert-check unavailable for {}: {e})", upd.name),
@@ -153,8 +192,19 @@ fn evaluate_lag(
     } else {
         String::new()
     };
-    let decision = vet(cfg, &upd.name, &scan, &diff);
-    outcome(upd, age_days, false, scan, Some(target), decision)
+    let (decision, ai_note, vet_steps) = vet(cfg, &upd.name, &scan, &diff);
+    let mut steps = Vec::with_capacity(vet_steps.len() + 2);
+    steps.push(lag_delay_step(cfg));
+    steps.push(ChainStep::new(
+        t!("Anti-revert"),
+        StepStatus::Passed,
+        t!("no compromise trace in the history"),
+    ));
+    steps.extend(vet_steps);
+    let mut o = outcome(upd, age_days, false, scan, Some(target), decision);
+    o.ai_note = ai_note;
+    o.steps = steps;
+    o
 }
 
 /// Decision targeting the latest version (whitelist, or hold after maturation).
@@ -165,26 +215,113 @@ fn decide_latest(cfg: &Config, upd: Update, age_days: Option<u64>, whitelisted: 
     } else {
         String::new()
     };
-    let decision = vet(cfg, &upd.name, &scan, &diff);
-    outcome(upd, age_days, whitelisted, scan, None, decision)
+    let (decision, ai_note, vet_steps) = vet(cfg, &upd.name, &scan, &diff);
+    let mut steps = Vec::with_capacity(vet_steps.len() + 1);
+    steps.push(if whitelisted {
+        ChainStep::new(
+            t!("Whitelist"),
+            StepStatus::Passed,
+            t!("trusted package, delay skipped"),
+        )
+    } else {
+        ChainStep::new(
+            t!("Delay"),
+            StepStatus::Passed,
+            t!("matured past the {}-day hold", cfg.delay_days),
+        )
+    });
+    steps.extend(vet_steps);
+    let mut o = outcome(upd, age_days, whitelisted, scan, None, decision);
+    o.ai_note = ai_note;
+    o.steps = steps;
+    o
 }
 
-/// Common static-scan + AI-review step. Returns the final decision;
-/// a flagged scan or an unfavourable AI verdict yield a justified block.
-fn vet(cfg: &Config, name: &str, scan: &ScanResult, diff: &str) -> Decision {
+/// The "delay" step for a lag-mode allowed package (it targets the deferred
+/// revision rather than the latest publication).
+fn lag_delay_step(cfg: &Config) -> ChainStep {
+    ChainStep::new(
+        t!("Delay"),
+        StepStatus::Passed,
+        t!(
+            "installing the deferred revision ({}-day lag)",
+            cfg.delay_days
+        ),
+    )
+}
+
+/// Common static-scan + AI-review step. Returns the final decision, plus the
+/// AI reviewer's own explanation whenever it ran — hidden from the default
+/// report, but kept so the frontends can offer it on demand (badge/expand).
+fn vet(
+    cfg: &Config,
+    name: &str,
+    scan: &ScanResult,
+    diff: &str,
+) -> (Decision, Option<String>, Vec<ChainStep>) {
+    let mut steps = vec![scan_step(cfg, scan)];
     if let ScanResult::Flagged(detail) = scan {
-        return Decision::Blocked(t!("aur-scan: {}", detail));
+        return (Decision::Blocked(t!("aur-scan: {}", detail)), None, steps);
     }
     if cfg.ai.enabled && !diff.trim().is_empty() {
         match ai::review_diff(&cfg.ai, name, diff) {
             Ok(v) if !v.safe => {
-                return Decision::Blocked(t!("AI [{}]: {}", v.severity, v.summary));
+                steps.push(ChainStep::new(
+                    t!("AI review"),
+                    StepStatus::Failed,
+                    v.summary.clone(),
+                ));
+                let note = v.summary.clone();
+                return (
+                    Decision::Blocked(t!("AI [{}]: {}", v.severity, v.summary)),
+                    Some(note),
+                    steps,
+                );
             }
-            Ok(_) => {}
-            Err(e) => eprintln!("  (AI review unavailable for {name}: {e})"),
+            Ok(v) => {
+                steps.push(ChainStep::new(
+                    t!("AI review"),
+                    StepStatus::Passed,
+                    v.summary.clone(),
+                ));
+                return (Decision::Allow, Some(v.summary), steps);
+            }
+            Err(e) => {
+                eprintln!("  (AI review unavailable for {name}: {e})");
+                steps.push(ChainStep::new(
+                    t!("AI review"),
+                    StepStatus::Skipped,
+                    t!("review unavailable"),
+                ));
+            }
         }
+    } else if cfg.ai.enabled {
+        steps.push(ChainStep::new(
+            t!("AI review"),
+            StepStatus::Skipped,
+            t!("no diff to review"),
+        ));
+    } else {
+        steps.push(ChainStep::new(
+            t!("AI review"),
+            StepStatus::Skipped,
+            t!("disabled"),
+        ));
     }
-    Decision::Allow
+    (Decision::Allow, None, steps)
+}
+
+/// Builds the static-scan chain step from its result.
+fn scan_step(cfg: &Config, scan: &ScanResult) -> ChainStep {
+    let (status, note) = match scan {
+        ScanResult::Clean => (StepStatus::Passed, t!("aur-scan: nothing to report")),
+        ScanResult::Flagged(detail) => (StepStatus::Failed, t!("aur-scan: {}", detail)),
+        ScanResult::Skipped if cfg.use_aur_scan => {
+            (StepStatus::Skipped, t!("aur-scan unavailable"))
+        }
+        ScanResult::Skipped => (StepStatus::Skipped, t!("disabled")),
+    };
+    ChainStep::new(t!("Static scan"), status, note)
 }
 
 /// Builds an `Outcome` (avoids repeating the struct literal).
@@ -205,6 +342,8 @@ fn outcome(
         lag,
         eligible_at: None,
         eligible_version: None,
+        ai_note: None,
+        steps: Vec::new(),
     }
 }
 
@@ -314,6 +453,8 @@ mod tests {
             lag: None,
             eligible_at: None,
             eligible_version: None,
+            ai_note: None,
+            steps: Vec::new(),
         }
     }
 

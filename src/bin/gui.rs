@@ -3,7 +3,7 @@
 //! Main view: the AUR updates (check + verdicts + apply).
 //! The settings live in a separate dialog (gear button).
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use gtk4 as gtk;
@@ -13,25 +13,31 @@ use libadwaita as adw;
 use libadwaita::prelude::*;
 
 use aurveto::config::{Config, DelayMode, Provider, Secrets};
-use aurveto::pipeline::{self, Decision, Outcome};
+use aurveto::pipeline::{self, ChainStep, Decision, Outcome, StepStatus};
 use aurveto::{aur, deploy, t};
 
 const APP_ID: &str = "fr.xhelliom.AurVeto";
 
-/// RGB color (0..1) of a distribution-bar segment / a swatch.
+/// RGB color (0..1) of a ring segment / a legend dot.
 type Rgb = (f64, f64, f64);
 
-/// Height of the distribution bar (px).
-const BAR_HEIGHT: i32 = 18;
-/// Side of a legend swatch (px).
-const SWATCH_SIZE: i32 = 12;
+/// Diameter of the summary donut (px).
+const RING_SIZE: i32 = 116;
+/// Ring track & segment thickness at rest (px).
+const RING_WIDTH: f64 = 11.0;
+/// Segment thickness when focused through its legend entry (px).
+const RING_FOCUS_WIDTH: f64 = 15.0;
+/// Opacity of the non-focused segments while one is focused.
+const RING_DIM: f64 = 0.32;
+/// Gap between adjacent segments (radians), so they read as distinct arcs.
+const RING_GAP: f64 = 0.10;
+/// Side of a legend dot (px).
+const DOT_SIZE: i32 = 9;
 
-// Category palette: aligned with Adwaita's semantic colors
-// (accent/green/blue/orange/red) to stay readable in light and dark themes.
-const COLOR_OFFICIAL: Rgb = (0.38, 0.49, 0.55); // slate — signed repos
-const COLOR_ALLOW: Rgb = (0.18, 0.76, 0.49); // green — installed at latest version
-const COLOR_LAG: Rgb = (0.20, 0.56, 0.85); // blue — installed at deferred revision
-const COLOR_DELAY: Rgb = (0.96, 0.55, 0.06); // orange — delayed
+// Category palette (blue/orange/red), matching the redesign mock — blue reads
+// as "ready", orange as "waiting". Readable in light and dark themes.
+const COLOR_ALLOW: Rgb = (0.20, 0.52, 0.90); // blue — cleared to install
+const COLOR_DELAY: Rgb = (0.96, 0.55, 0.06); // orange — maturing under the delay
 const COLOR_BLOCK: Rgb = (0.88, 0.11, 0.14); // red — blocked
 
 /// Status badge styles: colored pills. We rely on libadwaita's named colors
@@ -42,6 +48,7 @@ const BADGE_CSS: &str = "\
 .ag-badge.ag-ok   { background-color: alpha(@success_color, 0.15); color: @success_color; }
 .ag-badge.ag-warn { background-color: alpha(@warning_color, 0.15); color: @warning_color; }
 .ag-badge.ag-err  { background-color: alpha(@error_color, 0.15); color: @error_color; }
+.ag-hero { padding: 18px 20px; }
 ";
 
 fn main() -> glib::ExitCode {
@@ -118,39 +125,59 @@ fn build_ui(app: &adw::Application) {
         .label(t!("Check"))
         .css_classes(["pill"])
         .build();
-    let apply_btn = gtk::Button::builder()
-        .label(t!("Update selection"))
-        .css_classes(["pill"])
-        .tooltip_text(t!("Install only the checked AUR packages"))
-        .sensitive(false)
-        .build();
     let upgrade_btn = gtk::Button::builder()
         .label(t!("Update everything"))
         .css_classes(["suggested-action", "pill"])
         .tooltip_text(t!("Official repos (pacman -Syu) then safe AUR packages"))
         .build();
-    let btn_box = gtk::Box::new(Orientation::Horizontal, 8);
-    btn_box.append(&check_btn);
-    btn_box.append(&apply_btn);
-    btn_box.append(&upgrade_btn);
-    updates.set_header_suffix(Some(&btn_box));
 
-    // Checkboxes for the "allowed" packages (name, widget): filled by the
-    // check, read by the selective update.
-    let selected: Rc<RefCell<Vec<(String, gtk::CheckButton)>>> = Rc::new(RefCell::new(Vec::new()));
-
-    let results = gtk::ListBox::builder()
-        .selection_mode(gtk::SelectionMode::None)
-        .css_classes(["boxed-list"])
+    // One card per category (not a single shared list): each category gets
+    // its own visual block, spaced apart, so "to install" / "on hold" /
+    // "official" are never mistaken for the same group.
+    let results = gtk::Box::builder()
+        .orientation(Orientation::Vertical)
+        .spacing(12)
         .build();
-    results.append(&info_row(&t!("Click “Check” to run the analysis.")));
+    results.append(&card(&info_row(&t!("Click “Check” to run the analysis."))));
     updates.add(&results);
 
-    // Dashboard (KPIs + distribution bar), filled by the check.
+    // Summary hero (donut + recap + primary actions), built once. The check
+    // only refills the donut and the recap sentence, so the buttons persist.
+    let ring_holder = gtk::Box::builder()
+        .orientation(Orientation::Vertical)
+        .valign(gtk::Align::Center)
+        .build();
+    let recap_label = gtk::Label::builder()
+        .use_markup(true)
+        .wrap(true)
+        .xalign(0.0)
+        .hexpand(true)
+        .css_classes(["dim-label"])
+        .build();
+    let hero_actions = gtk::Box::new(Orientation::Horizontal, 8);
+    hero_actions.append(&check_btn);
+    hero_actions.append(&upgrade_btn);
+    let hero_right = gtk::Box::builder()
+        .orientation(Orientation::Vertical)
+        .spacing(12)
+        .hexpand(true)
+        .valign(gtk::Align::Center)
+        .build();
+    hero_right.append(&recap_label);
+    hero_right.append(&hero_actions);
+    let hero = gtk::Box::builder()
+        .orientation(Orientation::Horizontal)
+        .spacing(20)
+        .css_classes(["card", "ag-hero"])
+        .build();
+    hero.append(&ring_holder);
+    hero.append(&hero_right);
+
     let dashboard = gtk::Box::builder()
         .orientation(Orientation::Vertical)
         .spacing(12)
         .build();
+    dashboard.append(&hero);
 
     page.append(&dashboard);
     page.append(&updates);
@@ -183,9 +210,13 @@ fn build_ui(app: &adw::Application) {
     }
 
     wire_check(
-        &cfg, &check_btn, &dashboard, &results, &selected, &apply_btn,
+        &cfg,
+        &check_btn,
+        &ring_holder,
+        &recap_label,
+        &results,
+        &overlay,
     );
-    wire_apply(&apply_btn, &selected, &overlay);
     wire_upgrade(&upgrade_btn, &overlay);
 
     window.present();
@@ -200,24 +231,22 @@ fn build_ui(app: &adw::Application) {
 fn wire_check(
     cfg: &Rc<RefCell<Config>>,
     check_btn: &gtk::Button,
-    dashboard: &gtk::Box,
-    results: &gtk::ListBox,
-    selected: &Rc<RefCell<Vec<(String, gtk::CheckButton)>>>,
-    apply_btn: &gtk::Button,
+    ring_holder: &gtk::Box,
+    recap_label: &gtk::Label,
+    results: &gtk::Box,
+    overlay: &adw::ToastOverlay,
 ) {
     let cfg = cfg.clone();
-    let dashboard = dashboard.clone();
+    let ring_holder = ring_holder.clone();
+    let recap_label = recap_label.clone();
     let results = results.clone();
-    let selected = selected.clone();
-    let apply_btn = apply_btn.clone();
+    let overlay = overlay.clone();
     let check_btn_outer = check_btn.clone();
     check_btn.connect_clicked(move |_| {
         check_btn_outer.set_sensitive(false);
         check_btn_outer.set_label(&t!("Checking…"));
-        clear_box(&dashboard);
-        clear_listbox(&results);
-        selected.borrow_mut().clear();
-        apply_btn.set_sensitive(false);
+        clear_box(&results);
+        results.append(&card(&loading_row()));
 
         let snapshot = cfg.borrow().clone();
         let (tx, rx) = async_channel::bounded::<Result<(Vec<String>, Vec<Outcome>), String>>(1);
@@ -230,10 +259,10 @@ fn wire_check(
         });
 
         let cfg = cfg.clone();
-        let dashboard = dashboard.clone();
+        let ring_holder = ring_holder.clone();
+        let recap_label = recap_label.clone();
         let results = results.clone();
-        let selected = selected.clone();
-        let apply_btn = apply_btn.clone();
+        let overlay = overlay.clone();
         let check_btn_inner = check_btn_outer.clone();
         glib::spawn_future_local(async move {
             if let Ok(res) = rx.recv().await {
@@ -241,15 +270,18 @@ fn wire_check(
                     Ok((official, outcomes)) => {
                         render(
                             &cfg.borrow(),
-                            &dashboard,
+                            &ring_holder,
+                            &recap_label,
                             &results,
                             &official,
                             &outcomes,
-                            &selected,
-                            &apply_btn,
+                            &overlay,
                         );
                     }
-                    Err(e) => results.append(&info_row(&t!("Error: {}", e))),
+                    Err(e) => {
+                        clear_box(&results);
+                        results.append(&card(&info_row(&t!("Error: {}", e))));
+                    }
                 }
             }
             check_btn_inner.set_sensitive(true);
@@ -258,31 +290,29 @@ fn wire_check(
     });
 }
 
-/// Populates the dashboard (KPIs + bar) and the collapsible lists from the
+/// Refills the hero (donut + recap) and rebuilds the collapsible lists from the
 /// verdicts. All the decision-making is already done by `pipeline`; we only
 /// present and group.
 fn render(
     cfg: &Config,
-    dashboard: &gtk::Box,
-    results: &gtk::ListBox,
+    ring_holder: &gtk::Box,
+    recap_label: &gtk::Label,
+    results: &gtk::Box,
     official: &[String],
     outcomes: &[Outcome],
-    selected: &Rc<RefCell<Vec<(String, gtk::CheckButton)>>>,
-    apply_btn: &gtk::Button,
+    overlay: &adw::ToastOverlay,
 ) {
-    clear_box(dashboard);
-    clear_listbox(results);
-    selected.borrow_mut().clear();
+    let summary = pipeline::summarize(outcomes);
+    clear_box(ring_holder);
+    ring_holder.append(&summary_ring(&summary));
+    recap_label.set_label(&recap_text(&summary, official.len()));
+
+    clear_box(results);
 
     if official.is_empty() && outcomes.is_empty() {
-        results.append(&up_to_date_row(cfg));
-        apply_btn.set_sensitive(false);
+        results.append(&card(&up_to_date_row(cfg)));
         return;
     }
-
-    let summary = pipeline::summarize(outcomes);
-    dashboard.append(&kpi_row(official.len(), &summary));
-    dashboard.append(&distribution_bar(official, outcomes, &summary));
 
     // Blocked first (the most important), expanded.
     let blocked: Vec<&Outcome> = outcomes
@@ -292,6 +322,7 @@ fn render(
     if !blocked.is_empty() {
         let exp = group_expander(
             &t!("Blocked"),
+            &t!("Refused by the security chain (scan or AI review) — not installed."),
             blocked.len(),
             true,
             "dialog-warning-symbolic",
@@ -299,26 +330,29 @@ fn render(
         for o in &blocked {
             exp.add_row(&outcome_row(o));
         }
-        results.append(&exp);
+        results.append(&card(&exp));
     }
 
-    // To install, expanded, with checkboxes (selection = restriction).
+    // To install, expanded. Each package is its own expandable card showing
+    // the decision chain, with a per-package "Install" button.
     let allowed: Vec<&Outcome> = outcomes
         .iter()
         .filter(|o| o.decision == Decision::Allow)
         .collect();
     if !allowed.is_empty() {
-        let exp = group_expander(&t!("To install"), allowed.len(), true, "emblem-ok-symbolic");
-        for o in &allowed {
-            let row = outcome_row(o);
-            let check = gtk::CheckButton::builder()
-                .tooltip_text(t!("Include in the selective update"))
-                .build();
-            row.add_suffix(&check);
-            selected.borrow_mut().push((o.update.name.clone(), check));
-            exp.add_row(&row);
+        let exp = group_expander(
+            &t!("To install"),
+            &t!("AUR packages cleared for installation — install one, or all at once via “Update everything”."),
+            allowed.len(),
+            true,
+            "emblem-ok-symbolic",
+        );
+        for (i, o) in allowed.iter().enumerate() {
+            let pkg = allowed_card(o, overlay);
+            pkg.set_expanded(i == 0); // first one open, so the chain is visible at a glance
+            exp.add_row(&pkg);
         }
-        results.append(&exp);
+        results.append(&card(&exp));
     }
 
     // Delayed and official repos: collapsed by default (informational).
@@ -329,6 +363,7 @@ fn render(
     if !delayed.is_empty() {
         let exp = group_expander(
             &t!("On hold"),
+            &t!("AUR updates still maturing under the configured delay — not installable yet."),
             delayed.len(),
             false,
             "appointment-soon-symbolic",
@@ -336,12 +371,13 @@ fn render(
         for o in &delayed {
             exp.add_row(&outcome_row(o));
         }
-        results.append(&exp);
+        results.append(&card(&exp));
     }
 
     if !official.is_empty() {
         let exp = group_expander(
             &t!("Official repositories (signed)"),
+            &t!("Signed packages, outside aurveto's review — installed via `pacman -Syu`."),
             official.len(),
             false,
             "package-x-generic-symbolic",
@@ -349,41 +385,17 @@ fn render(
         for line in official {
             exp.add_row(&info_row(line));
         }
-        results.append(&exp);
+        results.append(&card(&exp));
     }
-
-    apply_btn.set_sensitive(!selected.borrow().is_empty());
 }
 
-/// Wires the "Update selection" button: runs `aurveto apply` (AUR packages
-/// only, without touching the official repos) restricted to the checked
-/// packages. The CLI re-evaluates the decision chain at install time: the
-/// selection bypasses no guard, it only narrows.
-fn wire_apply(
-    apply_btn: &gtk::Button,
-    selected: &Rc<RefCell<Vec<(String, gtk::CheckButton)>>>,
-    overlay: &adw::ToastOverlay,
-) {
-    let selected = selected.clone();
-    let overlay = overlay.clone();
-    apply_btn.connect_clicked(move |_| {
-        let names: Vec<String> = selected
-            .borrow()
-            .iter()
-            .filter(|(_, check)| check.is_active())
-            .map(|(name, _)| name.clone())
-            .collect();
-        if names.is_empty() {
-            overlay.add_toast(adw::Toast::new(&t!("Select at least one package first")));
-            return;
-        }
-        let cli = sh_quote(&deploy::cli_command());
-        let args: String = names.iter().map(|n| format!(" {}", sh_quote(n))).collect();
-        let _ = launch_in_terminal(&format!("{cli} apply{args}"));
-        overlay.add_toast(adw::Toast::new(&t!(
-            "Selective update started in a terminal"
-        )));
-    });
+/// Installs a single AUR package by running `aurveto apply <name>` in a
+/// terminal. The CLI re-evaluates the decision chain at install time: this
+/// bypasses no guard, it only narrows to one package.
+fn install_one(name: &str, overlay: &adw::ToastOverlay) {
+    let cli = sh_quote(&deploy::cli_command());
+    let _ = launch_in_terminal(&format!("{cli} apply {}", sh_quote(name)));
+    overlay.add_toast(adw::Toast::new(&t!("Installing {} in a terminal", name)));
 }
 
 /// Wires the "Update everything" button: runs `aurveto upgrade` in a terminal
@@ -750,12 +762,6 @@ fn update_wl_subtitle(expander: &adw::ExpanderRow, cfg: &Rc<RefCell<Config>>) {
     expander.set_subtitle(&t!("{} packages", cfg.borrow().whitelist.len()));
 }
 
-fn clear_listbox(list: &gtk::ListBox) {
-    while let Some(child) = list.first_child() {
-        list.remove(&child);
-    }
-}
-
 fn clear_box(b: &gtk::Box) {
     while let Some(child) = b.first_child() {
         b.remove(&child);
@@ -763,186 +769,272 @@ fn clear_box(b: &gtk::Box) {
 }
 
 // =====================================================================
-// Dashboard: KPIs + distribution bar
+// Dashboard: summary donut
 // =====================================================================
 
-/// Row of KPI cards summarising what will (or won't) be updated.
-fn kpi_row(official: usize, summary: &pipeline::Summary) -> gtk::Box {
-    let row = gtk::Box::builder()
-        .orientation(Orientation::Horizontal)
-        .spacing(8)
-        .homogeneous(true)
-        .build();
-    row.append(&kpi_card(official, &t!("Official"), "accent"));
-    row.append(&kpi_card(summary.allowed, &t!("To install"), "success"));
-    row.append(&kpi_card(summary.delayed, &t!("On hold"), "warning"));
-    row.append(&kpi_card(summary.blocked, &t!("Blocked"), "error"));
-    row
-}
-
-/// A KPI card: large colored number + label. `accent` is an Adwaita semantic
-/// style class (accent/success/warning/error).
-fn kpi_card(value: usize, label: &str, accent: &str) -> gtk::Box {
-    let card = gtk::Box::builder()
-        .orientation(Orientation::Vertical)
-        .spacing(2)
-        .hexpand(true)
-        .css_classes(["card"])
-        .margin_top(12)
-        .margin_bottom(12)
-        .margin_start(8)
-        .margin_end(8)
-        .build();
-    let num = gtk::Label::builder()
-        .label(value.to_string())
-        .css_classes(["title-1", accent])
-        .build();
-    let lbl = gtk::Label::builder()
-        .label(label)
-        .wrap(true)
-        .justify(gtk::Justification::Center)
-        .css_classes(["dim-label", "caption"])
-        .build();
-    card.append(&num);
-    card.append(&lbl);
-    card
-}
-
-/// A distribution-bar category: label, count, color.
-struct Segment {
-    label: String,
+/// A ring segment: a colored verdict count with a short status label.
+struct RingSeg {
     count: usize,
     color: Rgb,
+    label: String,
 }
 
-/// Horizontal segmented bar (proportional to the counts) + its legend.
-/// Visualizes at a glance official / to install / deferred / delayed / blocked.
-fn distribution_bar(
-    official: &[String],
-    outcomes: &[Outcome],
-    summary: &pipeline::Summary,
-) -> gtk::Box {
-    // Within the "allowed", distinguish latest version from deferred revision.
-    let lagged = outcomes
-        .iter()
-        .filter(|o| o.decision == Decision::Allow && o.lag.is_some())
-        .count();
-    let latest = summary.allowed.saturating_sub(lagged);
+/// The verdict donut (to install / on hold / blocked) with the total at its
+/// center and a legend that focuses a segment on hover. Returned on its own so
+/// the persistent hero card can swap it in on every check.
+fn summary_ring(summary: &pipeline::Summary) -> gtk::Box {
+    let segs: Rc<Vec<RingSeg>> = Rc::new(
+        [
+            (summary.allowed, COLOR_ALLOW, t!("To install")),
+            (summary.delayed, COLOR_DELAY, t!("On hold")),
+            (summary.blocked, COLOR_BLOCK, t!("Blocked")),
+        ]
+        .into_iter()
+        .filter(|(count, _, _)| *count > 0)
+        .map(|(count, color, label)| RingSeg {
+            count,
+            color,
+            label,
+        })
+        .collect(),
+    );
+    let total: usize = segs.iter().map(|s| s.count).sum();
 
-    let segments = [
-        Segment {
-            label: t!("Official"),
-            count: official.len(),
-            color: COLOR_OFFICIAL,
-        },
-        Segment {
-            label: t!("Latest"),
-            count: latest,
-            color: COLOR_ALLOW,
-        },
-        Segment {
-            label: t!("Deferred"),
-            count: lagged,
-            color: COLOR_LAG,
-        },
-        Segment {
-            label: t!("On hold"),
-            count: summary.delayed,
-            color: COLOR_DELAY,
-        },
-        Segment {
-            label: t!("Blocked"),
-            count: summary.blocked,
-            color: COLOR_BLOCK,
-        },
-    ];
+    // Which segment (if any) the pointer is focusing via its legend entry.
+    let focus: Rc<Cell<Option<usize>>> = Rc::new(Cell::new(None));
 
-    let container = gtk::Box::builder()
+    // Donut, custom-drawn; the total/label sit in an overlay at its center.
+    let area = gtk::DrawingArea::builder()
+        .width_request(RING_SIZE)
+        .height_request(RING_SIZE)
+        .build();
+    {
+        let segs = segs.clone();
+        let focus = focus.clone();
+        area.set_draw_func(move |_, cr, w, h| draw_ring(cr, w, h, &segs, focus.get()));
+    }
+
+    let center_num = gtk::Label::builder()
+        .label(total.to_string())
+        .css_classes(["title-1"])
+        .build();
+    let center_lbl = gtk::Label::builder()
+        .label(t!("AUR packages"))
+        .css_classes(["dim-label", "caption"])
+        .build();
+    let center = gtk::Box::builder()
         .orientation(Orientation::Vertical)
-        .spacing(8)
-        .build();
-
-    let bar = gtk::DrawingArea::builder()
-        .height_request(BAR_HEIGHT)
-        .hexpand(true)
-        .build();
-    bar.add_css_class("card");
-    let drawn: Vec<(usize, Rgb)> = segments.iter().map(|s| (s.count, s.color)).collect();
-    bar.set_draw_func(move |_, cr, width, height| {
-        let total: usize = drawn.iter().map(|(c, _)| c).sum();
-        if total == 0 {
-            return;
-        }
-        let (w, h) = (width as f64, height as f64);
-        let mut x = 0.0;
-        for (i, (count, color)) in drawn.iter().enumerate() {
-            // The last segment runs to the edge to absorb rounding errors.
-            let seg_w = if i + 1 == drawn.len() {
-                w - x
-            } else {
-                w * *count as f64 / total as f64
-            };
-            cr.set_source_rgb(color.0, color.1, color.2);
-            cr.rectangle(x, 0.0, seg_w, h);
-            let _ = cr.fill();
-            x += seg_w;
-        }
-    });
-    container.append(&bar);
-
-    // Legend: one swatch per non-empty category.
-    let legend = gtk::Box::builder()
-        .orientation(Orientation::Horizontal)
-        .spacing(14)
+        .valign(gtk::Align::Center)
         .halign(gtk::Align::Center)
         .build();
-    for s in segments.iter().filter(|s| s.count > 0) {
-        legend.append(&legend_item(s));
-    }
-    container.append(&legend);
+    center.append(&center_num);
+    center.append(&center_lbl);
 
-    container
+    let overlay = gtk::Overlay::new();
+    overlay.set_child(Some(&area));
+    overlay.add_overlay(&center);
+
+    // Rewrites the center to the focused segment's count, or the total at rest.
+    let refresh_center: Rc<dyn Fn()> = {
+        let segs = segs.clone();
+        let focus = focus.clone();
+        let num = center_num.clone();
+        let lbl = center_lbl.clone();
+        Rc::new(move || match focus.get() {
+            Some(i) => {
+                num.set_label(&segs[i].count.to_string());
+                lbl.set_label(&segs[i].label);
+            }
+            None => {
+                num.set_label(&total.to_string());
+                lbl.set_label(&t!("AUR packages"));
+            }
+        })
+    };
+
+    let legend = gtk::Box::builder()
+        .orientation(Orientation::Horizontal)
+        .spacing(12)
+        .halign(gtk::Align::Center)
+        .build();
+    for (i, seg) in segs.iter().enumerate() {
+        legend.append(&legend_item(i, seg, &focus, &area, &refresh_center));
+    }
+
+    let ring_col = gtk::Box::builder()
+        .orientation(Orientation::Vertical)
+        .spacing(10)
+        .valign(gtk::Align::Center)
+        .build();
+    ring_col.append(&overlay);
+    ring_col.append(&legend);
+    ring_col
 }
 
-/// A legend entry: colored swatch + "label count".
-fn legend_item(seg: &Segment) -> gtk::Box {
+/// One-sentence recap of the verdicts, with the official (out-of-scope) count.
+fn recap_text(summary: &pipeline::Summary, official: usize) -> String {
+    let mut s = t!(
+        "<b>{}</b> ready to install · <b>{}</b> maturing under the delay · <b>{}</b> blocked.",
+        summary.allowed,
+        summary.delayed,
+        summary.blocked
+    );
+    if official > 0 {
+        s.push(' ');
+        s.push_str(&t!(
+            "{} signed official packages are out of scope.",
+            official
+        ));
+    }
+    s
+}
+
+/// Draws the verdict donut: a faint full-circle track, then one rounded arc per
+/// segment. The focused segment thickens; the others dim.
+fn draw_ring(cr: &gtk::cairo::Context, w: i32, h: i32, segs: &[RingSeg], focus: Option<usize>) {
+    let total: usize = segs.iter().map(|s| s.count).sum();
+    if total == 0 {
+        return;
+    }
+    let (cx, cy) = (w as f64 / 2.0, h as f64 / 2.0);
+    // Leave room for the thickest (focused) stroke so it never clips the edge.
+    let radius = cx.min(cy) - RING_FOCUS_WIDTH / 2.0 - 1.0;
+
+    // Theme-aware track: a faint foreground tint (light on dark, dark on light).
+    let fg = if adw::StyleManager::default().is_dark() {
+        1.0
+    } else {
+        0.0
+    };
+    cr.set_source_rgba(fg, fg, fg, 0.12);
+    cr.set_line_width(RING_WIDTH);
+    cr.arc(cx, cy, radius, 0.0, std::f64::consts::TAU);
+    let _ = cr.stroke();
+
+    cr.set_line_cap(gtk::cairo::LineCap::Round);
+    let mut angle = -std::f64::consts::FRAC_PI_2; // start at 12 o'clock
+    for (i, seg) in segs.iter().enumerate() {
+        let sweep = std::f64::consts::TAU * seg.count as f64 / total as f64;
+        let (width, alpha) = match focus {
+            Some(f) if f == i => (RING_FOCUS_WIDTH, 1.0),
+            Some(_) => (RING_WIDTH, RING_DIM),
+            None => (RING_WIDTH, 1.0),
+        };
+        cr.set_source_rgba(seg.color.0, seg.color.1, seg.color.2, alpha);
+        cr.set_line_width(width);
+        // Inset each end by half a gap so adjacent arcs read as distinct.
+        let half_gap = (RING_GAP / 2.0).min(sweep / 2.0);
+        cr.arc(cx, cy, radius, angle + half_gap, angle + sweep - half_gap);
+        let _ = cr.stroke();
+        angle += sweep;
+    }
+}
+
+/// A legend entry (colored dot + "count label"). Hovering it focuses the
+/// matching ring segment and swaps the donut's center readout.
+fn legend_item(
+    index: usize,
+    seg: &RingSeg,
+    focus: &Rc<Cell<Option<usize>>>,
+    area: &gtk::DrawingArea,
+    refresh_center: &Rc<dyn Fn()>,
+) -> gtk::Box {
     let item = gtk::Box::builder()
         .orientation(Orientation::Horizontal)
         .spacing(6)
         .build();
-    let swatch = gtk::DrawingArea::builder()
-        .width_request(SWATCH_SIZE)
-        .height_request(SWATCH_SIZE)
+    item.set_cursor_from_name(Some("pointer"));
+
+    let dot = gtk::DrawingArea::builder()
+        .width_request(DOT_SIZE)
+        .height_request(DOT_SIZE)
         .valign(gtk::Align::Center)
         .build();
     let color = seg.color;
-    swatch.set_draw_func(move |_, cr, width, height| {
+    dot.set_draw_func(move |_, cr, w, h| {
+        let r = w.min(h) as f64 / 2.0;
         cr.set_source_rgb(color.0, color.1, color.2);
-        cr.rectangle(0.0, 0.0, width as f64, height as f64);
+        cr.arc(r, r, r, 0.0, std::f64::consts::TAU);
         let _ = cr.fill();
     });
+
     let label = gtk::Label::builder()
-        .label(format!("{} {}", seg.label, seg.count))
-        .css_classes(["caption"])
+        .label(format!("{} {}", seg.count, seg.label.to_lowercase()))
+        .css_classes(["caption", "dim-label"])
         .build();
-    item.append(&swatch);
+    item.append(&dot);
     item.append(&label);
+
+    // Hover focuses this segment; leaving restores the total.
+    let motion = gtk::EventControllerMotion::new();
+    {
+        let focus = focus.clone();
+        let area = area.clone();
+        let refresh_center = refresh_center.clone();
+        motion.connect_enter(move |_, _, _| {
+            focus.set(Some(index));
+            refresh_center();
+            area.queue_draw();
+        });
+    }
+    {
+        let focus = focus.clone();
+        let area = area.clone();
+        let refresh_center = refresh_center.clone();
+        motion.connect_leave(move |_| {
+            focus.set(None);
+            refresh_center();
+            area.queue_draw();
+        });
+    }
+    item.add_controller(motion);
     item
 }
 
-/// Collapsible row grouping packages of the same category (title + counter).
-fn group_expander(title: &str, count: usize, expanded: bool, icon: &str) -> adw::ExpanderRow {
+/// Collapsible row grouping packages of the same category (title + counter),
+/// with a plain-language explanation of what the category means — the
+/// category name alone ("on hold", "to install"...) isn't self-explanatory.
+fn group_expander(
+    title: &str,
+    description: &str,
+    count: usize,
+    expanded: bool,
+    icon: &str,
+) -> adw::ExpanderRow {
     let exp = adw::ExpanderRow::builder()
         .title(title)
-        .subtitle(t!("{} packages", count))
+        .subtitle(t!("{} packages — {}", count, description))
         .expanded(expanded)
         .build();
+    exp.set_subtitle_lines(0); // the explanation must not be truncated
     exp.add_prefix(&gtk::Image::from_icon_name(icon));
     exp
 }
 
 fn info_row(text: &str) -> adw::ActionRow {
     adw::ActionRow::builder().title(text).build()
+}
+
+/// A spinning placeholder shown in the results area while a check runs, so
+/// the page never looks simply frozen/blank.
+fn loading_row() -> adw::ActionRow {
+    let row = adw::ActionRow::builder()
+        .title(t!("Checking your AUR updates…"))
+        .build();
+    row.add_prefix(&gtk::Spinner::builder().spinning(true).build());
+    row
+}
+
+/// Wraps a single row/expander in its own rounded "card" (a one-item
+/// boxed-list), so each category is visually separated from the others
+/// instead of all being glued into one shared list.
+fn card(child: &impl IsA<gtk::Widget>) -> gtk::ListBox {
+    let list = gtk::ListBox::builder()
+        .selection_mode(gtk::SelectionMode::None)
+        .css_classes(["boxed-list"])
+        .build();
+    list.append(child);
+    list
 }
 
 /// Registers the badge stylesheet for the whole display (once).
@@ -1095,6 +1187,57 @@ fn delayed_badge(o: &Outcome, now: u64) -> gtk::Label {
     }
 }
 
+/// One "to install" package as an expandable card: the header carries the
+/// target version, a "safe" chip and an Install button; expanding reveals the
+/// decision chain that cleared it (whitelist / delay / anti-revert / scan / AI).
+fn allowed_card(o: &Outcome, overlay: &adw::ToastOverlay) -> adw::ExpanderRow {
+    let exp = adw::ExpanderRow::builder()
+        .title(format!("{} → {}", o.update.name, allow_target(o)))
+        .subtitle(allow_detail(o))
+        .build();
+    exp.set_use_markup(false); // literal package names/versions
+    exp.set_subtitle_lines(0);
+    exp.add_prefix(&gtk::Image::from_icon_name("emblem-ok-symbolic"));
+    exp.add_suffix(&badge(&t!("✓ safe"), "ag-ok"));
+
+    let install = gtk::Button::builder()
+        .label(t!("Install"))
+        .valign(gtk::Align::Center)
+        .css_classes(["suggested-action", "pill"])
+        .build();
+    {
+        let name = o.update.name.clone();
+        let overlay = overlay.clone();
+        install.connect_clicked(move |_| install_one(&name, &overlay));
+    }
+    exp.add_suffix(&install);
+
+    for step in &o.steps {
+        exp.add_row(&chain_step_row(step));
+    }
+    exp
+}
+
+/// One decision-chain link as a sub-row: a colored status icon, the step name,
+/// and the pipeline's own explanation (never re-derived in the frontend).
+fn chain_step_row(step: &ChainStep) -> adw::ActionRow {
+    let (icon, style) = match step.status {
+        StepStatus::Passed => ("emblem-ok-symbolic", "success"),
+        StepStatus::Skipped => ("list-remove-symbolic", "dim-label"),
+        StepStatus::Failed => ("dialog-error-symbolic", "error"),
+    };
+    let row = adw::ActionRow::builder()
+        .title(&step.name)
+        .subtitle(&step.note)
+        .build();
+    row.set_use_markup(false); // literal reasons (may contain markup-like chars)
+    row.set_subtitle_lines(0);
+    let img = gtk::Image::from_icon_name(icon);
+    img.add_css_class(style);
+    row.add_prefix(&img);
+    row
+}
+
 /// A verdict row: title = "package → target version" (clearly visible), colored
 /// status badge on the right, greyed-out details in the subtitle. Badge color +
 /// title = "which version, which status" grasped at a glance.
@@ -1123,8 +1266,33 @@ fn outcome_row(o: &Outcome) -> adw::ActionRow {
             "dialog-warning-symbolic"
         }
     };
+    if let Some(note) = &o.ai_note {
+        row.add_suffix(&ai_badge(note));
+    }
     row.add_prefix(&gtk::Image::from_icon_name(icon));
     row
+}
+
+/// "AI" badge shown whenever the AI reviewed this package. Hidden by default
+/// in the sense that nothing is shown until clicked — the reviewer's own
+/// explanation only appears in a popover, so it stays out of the way once the
+/// review is trusted, but stays one click away for first uses.
+fn ai_badge(note: &str) -> gtk::MenuButton {
+    let label = gtk::Label::builder()
+        .label(note)
+        .wrap(true)
+        .max_width_chars(48)
+        .margin_top(8)
+        .margin_bottom(8)
+        .margin_start(8)
+        .margin_end(8)
+        .build();
+    gtk::MenuButton::builder()
+        .label(t!("AI"))
+        .css_classes(["ag-badge", "ag-ok", "flat"])
+        .valign(gtk::Align::Center)
+        .popover(&gtk::Popover::builder().child(&label).build())
+        .build()
 }
 
 /// Wraps a string in single quotes to inject it safely into a `bash -c` line

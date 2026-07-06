@@ -572,3 +572,85 @@ msgstr "{} — blocage confirmé par {}/{} votes"
 
 msgid "initial block NOT confirmed ({}/{} suspicious votes) — allowed"
 msgstr "blocage initial NON confirmé ({}/{} votes suspects) — autorisé"
+
+msgid "[AI reviewed]"
+msgstr "[revu par l'IA]"
+
+msgid "↳ AI:"
+msgstr "↳ IA :"
+
+# ---- GUI (bin/gui.rs) ----
+msgid "AI"
+msgstr "IA"
+
+msgid "{} packages — {}"
+msgstr "{} paquets — {}"
+
+msgid "Refused by the security chain (scan or AI review) — not installed."
+msgstr "Refusé par la chaîne de sécurité (scan ou review IA) — non installé."
+
+msgid "AUR packages cleared for installation now — “Update everything” installs all of them, “Update selection” only the checked ones."
+msgstr "Paquets AUR validés à l'instant — « Tout mettre à jour » les installe tous, « Mettre à jour la sélection » seulement ceux cochés."
+
+msgid "AUR updates still maturing under the configured delay — not installable yet."
+msgstr "Mises à jour AUR encore en maturation sous le délai configuré — pas encore installables."
+
+msgid "Signed packages, outside aurveto's review — installed via `pacman -Syu`."
+msgstr "Paquets signés, hors du périmètre de review d'aurveto — installés via `pacman -Syu`."
+
+msgid "Checking your AUR updates…"
+msgstr "Vérification de vos mises à jour AUR…"
+
+msgid "AUR packages"
+msgstr "paquets AUR"
+
+msgid "<b>{}</b> ready to install · <b>{}</b> maturing under the delay · <b>{}</b> blocked."
+msgstr "<b>{}</b> prêts à installer · <b>{}</b> en maturation sous le délai · <b>{}</b> bloqués."
+
+msgid "{} signed official packages are out of scope."
+msgstr "{} paquets officiels signés hors périmètre."
+
+msgid "Static scan"
+msgstr "Scan statique"
+
+msgid "Delay"
+msgstr "Délai"
+
+msgid "Anti-revert"
+msgstr "Anti-retour"
+
+msgid "Install"
+msgstr "Installer"
+
+msgid "review unavailable"
+msgstr "revue indisponible"
+
+msgid "no diff to review"
+msgstr "aucun diff à examiner"
+
+msgid "aur-scan: nothing to report"
+msgstr "aur-scan : rien à signaler"
+
+msgid "aur-scan unavailable"
+msgstr "aur-scan indisponible"
+
+msgid "trusted package, delay skipped"
+msgstr "paquet de confiance, délai ignoré"
+
+msgid "matured past the {}-day hold"
+msgstr "maturé au-delà du blocage de {} j"
+
+msgid "installing the deferred revision ({}-day lag)"
+msgstr "installe la révision différée (décalage {} j)"
+
+msgid "no compromise trace in the history"
+msgstr "aucune trace de compromission dans l'historique"
+
+msgid "✓ safe"
+msgstr "✓ sûr"
+
+msgid "Installing {} in a terminal"
+msgstr "Installation de {} dans un terminal"
+
+msgid "AUR packages cleared for installation — install one, or all at once via “Update everything”."
+msgstr "Paquets AUR validés — installe-les un par un, ou tous d'un coup via « Tout mettre à jour »."
