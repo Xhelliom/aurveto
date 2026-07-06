@@ -48,3 +48,67 @@ jobs:
           ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
           commit_message: "Update to ${{ github.event.release.tag_name || github.event.inputs.tag }}"
           ssh_keyscan_types: rsa,ed25519
+
+  # Builds x86_64 binaries and attaches them to the GitHub release, so
+  # aurveto-bin can install them without needing cargo/rustc/gtk4-dev on the
+  # user's machine. aarch64 isn't cross-compiled here (gtk4/libadwaita cross
+  # builds are a hassle) — aarch64 users stay on the source `aurveto` package.
+  build-bin:
+    name: Build x86_64 binaries
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install -y libgtk-4-dev libadwaita-1-dev gettext
+
+      - name: Build release binaries
+        run: cargo build --release
+
+      - name: Assemble release tarball
+        run: |
+          stage=$(mktemp -d)
+          cp target/release/aurveto target/release/aurveto-gui "$stage/"
+          cp data/fr.xhelliom.AurVeto.desktop data/fr.xhelliom.AurVeto.svg LICENSE "$stage/"
+          for po in po/*.po; do
+            lang="$(basename "$po" .po)"
+            mkdir -p "$stage/locale/$lang"
+            msgfmt "$po" -o "$stage/locale/$lang/aurveto.mo"
+          done
+          tar czf aurveto-x86_64-linux.tar.gz -C "$stage" .
+
+      - name: Upload release asset
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag='${{ github.event.release.tag_name || github.event.inputs.tag }}'
+          gh release upload "$tag" aurveto-x86_64-linux.tar.gz --repo ${{ github.repository }} --clobber
+
+  aur-bin:
+    name: Publish aurveto-bin to AUR
+    needs: build-bin
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Pin pkgver to the release tag
+        run: |
+          tag='${{ github.event.release.tag_name || github.event.inputs.tag }}'
+          ver="${tag#v}"
+          sed -i -E "s/^pkgver=.*/pkgver=$ver/" packaging/aur/aurveto-bin/PKGBUILD
+          sed -i -E "s/^pkgrel=.*/pkgrel=1/"    packaging/aur/aurveto-bin/PKGBUILD
+          grep -E '^(pkgver|pkgrel)=' packaging/aur/aurveto-bin/PKGBUILD
+
+      - name: Deploy to the AUR
+        uses: KSXGitHub/github-actions-deploy-aur@v2.7.2
+        with:
+          pkgname: aurveto-bin
+          pkgbuild: packaging/aur/aurveto-bin/PKGBUILD
+          updpkgsums: true
+          commit_username: ${{ secrets.AUR_USERNAME }}
+          commit_email: ${{ secrets.AUR_EMAIL }}
+          ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+          commit_message: "Update to ${{ github.event.release.tag_name || github.event.inputs.tag }}"
+          ssh_keyscan_types: rsa,ed25519
