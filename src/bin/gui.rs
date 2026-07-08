@@ -2,6 +2,11 @@
 //!
 //! Main view: the AUR updates (check + verdicts + apply).
 //! The settings live in a separate dialog (gear button).
+//!
+//! The visual language follows the "AURVeto Redesign" mock: a warm off-white
+//! canvas, a green brand accent, flat bordered cards, and a per-package
+//! decision chain drawn as green-bulleted steps. The palette lives in
+//! `THEME_CSS`; the widgets below only assign classes and lay out.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -20,36 +25,99 @@ const APP_ID: &str = "fr.xhelliom.AurVeto";
 
 /// RGB color (0..1) of a ring segment / a legend dot.
 type Rgb = (f64, f64, f64);
+/// RGBA color (0..1) — a fill tint with its own alpha.
+type Rgba = (f64, f64, f64, f64);
 
 /// Diameter of the summary donut (px).
-const RING_SIZE: i32 = 116;
+const RING_SIZE: i32 = 112;
 /// Ring track & segment thickness at rest (px).
 const RING_WIDTH: f64 = 11.0;
 /// Segment thickness when focused through its legend entry (px).
-const RING_FOCUS_WIDTH: f64 = 15.0;
+const RING_FOCUS_WIDTH: f64 = 14.0;
 /// Opacity of the non-focused segments while one is focused.
 const RING_DIM: f64 = 0.32;
 /// Gap between adjacent segments (radians), so they read as distinct arcs.
 const RING_GAP: f64 = 0.10;
 /// Side of a legend dot (px).
 const DOT_SIZE: i32 = 9;
+/// Side of the brand shield in the header (px).
+const LOGO_SIZE: i32 = 30;
+/// Side of a decision-chain step bullet (px).
+const BULLET_SIZE: i32 = 18;
+/// How many pending packages the "on hold" list shows before folding the rest
+/// behind a "+N more" reveal — matches the mock's compact list.
+const VISIBLE_WAITING: usize = 2;
 
-// Category palette (blue/orange/red), matching the redesign mock — blue reads
-// as "ready", orange as "waiting". Readable in light and dark themes.
-const COLOR_ALLOW: Rgb = (0.20, 0.52, 0.90); // blue — cleared to install
-const COLOR_DELAY: Rgb = (0.96, 0.55, 0.06); // orange — maturing under the delay
-const COLOR_BLOCK: Rgb = (0.88, 0.11, 0.14); // red — blocked
+// Donut / legend palette, matching the redesign: blue reads as "ready to
+// install", orange as "maturing under the delay", red as "blocked".
+const COLOR_ALLOW: Rgb = (0.184, 0.475, 0.859); // blue  #2f79db
+const COLOR_DELAY: Rgb = (0.878, 0.569, 0.184); // orange #e0912f
+const COLOR_BLOCK: Rgb = (0.784, 0.192, 0.184); // red    #c8312f
 
-/// Status badge styles: colored pills. We rely on libadwaita's named colors
-/// (`@success_color`…) to stay readable in light and dark themes, without
-/// hard-coding any hue.
-const BADGE_CSS: &str = "\
-.ag-badge { border-radius: 12px; padding: 1px 9px; font-weight: bold; }
-.ag-badge.ag-ok   { background-color: alpha(@success_color, 0.15); color: @success_color; }
-.ag-badge.ag-warn { background-color: alpha(@warning_color, 0.15); color: @warning_color; }
-.ag-badge.ag-err  { background-color: alpha(@error_color, 0.15); color: @error_color; }
-.ag-hero { padding: 18px 20px; }
-";
+/// The whole theme: warm canvas, green accent, flat cards, decision-chain
+/// bullets and grouped rows. Loaded once at startup (`install_css`). Colors are
+/// literal sRGB so the sheet parses on any GTK4 build.
+const THEME_CSS: &str = r#"
+/* ---- canvas & header ---- */
+window { background-color: #f6f4ef; }
+headerbar { background: transparent; box-shadow: none; }
+
+.ag-title { font-size: 15px; font-weight: 700; color: #161513; }
+button.ag-gear { background: transparent; background-image: none; box-shadow: none; border: 1px solid rgba(20,20,18,0.10); border-radius: 8px; min-width: 30px; min-height: 30px; color: rgba(20,20,18,0.5); }
+button.ag-gear:hover { background-color: rgba(20,20,18,0.05); }
+
+/* ---- hero ---- */
+.ag-hero { padding: 6px 4px 14px 4px; }
+.ag-recap { font-size: 13px; color: rgba(20,20,18,0.62); }
+
+button.ag-btn-check { background-color: #ffffff; background-image: none; color: #161513; border: 1px solid rgba(20,20,18,0.14); border-radius: 8px; padding: 7px 15px; font-weight: 500; box-shadow: none; }
+button.ag-btn-check:hover { background-color: #faf9f6; }
+button.ag-btn-primary { background-color: #3aa35c; background-image: none; color: #ffffff; border: none; border-radius: 8px; padding: 7px 16px; font-weight: 600; box-shadow: none; }
+button.ag-btn-primary:hover { background-color: #349152; }
+
+/* ---- section headers ---- */
+button.ag-section { background: transparent; background-image: none; box-shadow: none; border: none; padding: 4px 2px; }
+button.ag-section:hover { background: transparent; }
+.ag-caret { font-size: 9px; color: rgba(20,20,18,0.35); }
+.ag-section-label { font-size: 11px; font-weight: 700; color: rgba(20,20,18,0.42); letter-spacing: 1px; }
+.ag-section-suffix { font-size: 10px; color: rgba(20,20,18,0.32); }
+
+/* ---- package card ---- */
+.ag-card { background-color: #ffffff; border: 1px solid rgba(20,20,18,0.09); border-radius: 12px; padding: 16px 18px; }
+button.ag-toggler { background: transparent; background-image: none; box-shadow: none; border: none; padding: 0; }
+button.ag-toggler:hover { background: transparent; }
+.ag-pkg-name { font-size: 14px; font-weight: 600; color: #161513; }
+.ag-pkg-ver { font-family: monospace; font-size: 12px; color: rgba(20,20,18,0.5); }
+.ag-pkg-sub { font-size: 10px; color: rgba(20,20,18,0.34); }
+
+.ag-pill-safe { background-color: rgba(58,163,92,0.15); color: #2c7a45; border-radius: 999px; padding: 4px 12px; font-size: 11px; font-weight: 600; }
+.ag-pill-blocked { background-color: rgba(200,49,47,0.14); color: #b02a28; border-radius: 999px; padding: 4px 12px; font-size: 11px; font-weight: 600; }
+
+button.ag-install { background-color: #161513; background-image: none; color: #ffffff; border: none; border-radius: 7px; padding: 7px 14px; font-weight: 600; box-shadow: none; }
+button.ag-install:hover { background-color: #2c2a27; }
+
+/* ---- decision chain ---- */
+.ag-chain { border-top: 1px dashed rgba(20,20,18,0.13); padding-top: 14px; margin-top: 14px; }
+.ag-step-name { font-size: 12px; font-weight: 500; color: rgba(20,20,18,0.72); }
+.ag-step-note { font-size: 11px; color: rgba(20,20,18,0.42); }
+
+/* ---- grouped rows (on hold / official) ---- */
+.ag-list { background-color: rgba(20,20,18,0.07); border-radius: 10px; padding: 1px; }
+.ag-row { background-color: #ffffff; padding: 11px 15px; }
+.ag-row-title { font-size: 13px; font-weight: 500; color: #161513; }
+.ag-row-sub { font-size: 10px; color: rgba(20,20,18,0.32); }
+.ag-row-meta { font-size: 11px; color: rgba(20,20,18,0.45); }
+button.ag-more { background-color: #ffffff; background-image: none; box-shadow: none; color: rgba(20,20,18,0.5); border: none; padding: 10px 15px; font-size: 12px; font-weight: 500; }
+button.ag-more:hover { background-color: #faf9f6; }
+
+.ag-dot { min-width: 8px; min-height: 8px; border-radius: 999px; }
+.ag-dot-orange { background-color: #e0912f; }
+.ag-dot-blue { background-color: #2f79db; }
+.ag-dot-red { background-color: #c8312f; }
+.ag-dot-grey { background-color: rgba(20,20,18,0.28); }
+
+.ag-divider { background-color: rgba(20,20,18,0.08); min-height: 1px; }
+"#;
 
 fn main() -> glib::ExitCode {
     aurveto::i18n::init();
@@ -87,19 +155,35 @@ fn provider_name(p: Provider) -> &'static str {
 // =====================================================================
 
 fn build_ui(app: &adw::Application) {
+    // The mock is a light, warm design; force the light scheme so libadwaita's
+    // named colors and the donut track resolve against a light background.
+    adw::StyleManager::default().set_color_scheme(adw::ColorScheme::ForceLight);
     install_css();
     let cfg = Rc::new(RefCell::new(Config::load_or_init().unwrap_or_default()));
 
     let window = adw::ApplicationWindow::builder()
         .application(app)
         .title("aurveto")
-        .default_width(560)
-        .default_height(720)
+        .default_width(620)
+        .default_height(780)
         .build();
 
+    // Flat header carrying the brand cluster (green check logo + name) on the
+    // left and the settings gear on the right, blended into the canvas.
     let header = adw::HeaderBar::new();
+    header.add_css_class("flat");
+    header.set_title_widget(Some(&gtk::Label::new(None)));
+
+    let brand = gtk::Box::new(Orientation::Horizontal, 10);
+    brand.append(&brand_logo());
+    let title = gtk::Label::new(Some("aurveto"));
+    title.add_css_class("ag-title");
+    brand.append(&title);
+    header.pack_start(&brand);
+
     let settings_btn = gtk::Button::builder()
         .icon_name("emblem-system-symbolic")
+        .css_classes(["ag-gear"])
         .tooltip_text(t!("Settings"))
         .build();
     header.pack_end(&settings_btn);
@@ -109,40 +193,25 @@ fn build_ui(app: &adw::Application) {
 
     let page = gtk::Box::builder()
         .orientation(Orientation::Vertical)
-        .spacing(18)
-        .margin_top(18)
-        .margin_bottom(18)
-        .margin_start(18)
-        .margin_end(18)
+        .spacing(0)
+        .margin_top(4)
+        .margin_bottom(22)
+        .margin_start(22)
+        .margin_end(22)
         .build();
-
-    let updates = adw::PreferencesGroup::builder()
-        .title(t!("AUR updates"))
-        .description(t!("Checks packages against the configured decision chain"))
-        .build();
-
-    let check_btn = gtk::Button::builder()
-        .label(t!("Check"))
-        .css_classes(["pill"])
-        .build();
-    let upgrade_btn = gtk::Button::builder()
-        .label(t!("Update everything"))
-        .css_classes(["suggested-action", "pill"])
-        .tooltip_text(t!("Official repos (pacman -Syu) then safe AUR packages"))
-        .build();
-
-    // One card per category (not a single shared list): each category gets
-    // its own visual block, spaced apart, so "to install" / "on hold" /
-    // "official" are never mistaken for the same group.
-    let results = gtk::Box::builder()
-        .orientation(Orientation::Vertical)
-        .spacing(12)
-        .build();
-    results.append(&card(&info_row(&t!("Click “Check” to run the analysis."))));
-    updates.add(&results);
 
     // Summary hero (donut + recap + primary actions), built once. The check
     // only refills the donut and the recap sentence, so the buttons persist.
+    let check_btn = gtk::Button::builder()
+        .label(t!("Check"))
+        .css_classes(["ag-btn-check"])
+        .build();
+    let upgrade_btn = gtk::Button::builder()
+        .label(t!("Update everything"))
+        .css_classes(["ag-btn-primary"])
+        .tooltip_text(t!("Official repos (pacman -Syu) then safe AUR packages"))
+        .build();
+
     let ring_holder = gtk::Box::builder()
         .orientation(Orientation::Vertical)
         .valign(gtk::Align::Center)
@@ -152,7 +221,7 @@ fn build_ui(app: &adw::Application) {
         .wrap(true)
         .xalign(0.0)
         .hexpand(true)
-        .css_classes(["dim-label"])
+        .css_classes(["ag-recap"])
         .build();
     let hero_actions = gtk::Box::new(Orientation::Horizontal, 8);
     hero_actions.append(&check_btn);
@@ -167,20 +236,29 @@ fn build_ui(app: &adw::Application) {
     hero_right.append(&hero_actions);
     let hero = gtk::Box::builder()
         .orientation(Orientation::Horizontal)
-        .spacing(20)
-        .css_classes(["card", "ag-hero"])
+        .spacing(24)
+        .css_classes(["ag-hero"])
         .build();
     hero.append(&ring_holder);
     hero.append(&hero_right);
+    page.append(&hero);
 
-    let dashboard = gtk::Box::builder()
+    // Divider between the hero and the categorized lists.
+    let divider = gtk::Box::new(Orientation::Horizontal, 0);
+    divider.add_css_class("ag-divider");
+    divider.set_hexpand(true);
+    divider.set_margin_top(4);
+    divider.set_margin_bottom(16);
+    page.append(&divider);
+
+    // One collapsible section per category (blocked / to install / on hold /
+    // official), rebuilt on every check.
+    let results = gtk::Box::builder()
         .orientation(Orientation::Vertical)
-        .spacing(12)
+        .spacing(18)
         .build();
-    dashboard.append(&hero);
-
-    page.append(&dashboard);
-    page.append(&updates);
+    results.append(&card(&info_row(&t!("Click “Check” to run the analysis."))));
+    page.append(&results);
 
     let scroller = gtk::ScrolledWindow::builder()
         .vexpand(true)
@@ -290,8 +368,8 @@ fn wire_check(
     });
 }
 
-/// Refills the hero (donut + recap) and rebuilds the collapsible lists from the
-/// verdicts. All the decision-making is already done by `pipeline`; we only
+/// Refills the hero (donut + recap) and rebuilds the collapsible sections from
+/// the verdicts. All the decision-making is already done by `pipeline`; we only
 /// present and group.
 fn render(
     cfg: &Config,
@@ -314,78 +392,56 @@ fn render(
         return;
     }
 
+    let now = aur::now_secs();
+
     // Blocked first (the most important), expanded.
     let blocked: Vec<&Outcome> = outcomes
         .iter()
         .filter(|o| matches!(o.decision, Decision::Blocked(_)))
         .collect();
     if !blocked.is_empty() {
-        let exp = group_expander(
-            &t!("Blocked"),
-            &t!("Refused by the security chain (scan or AI review) — not installed."),
-            blocked.len(),
-            true,
-            "dialog-warning-symbolic",
-        );
+        let (sec, content) = section(&t!("Blocked"), blocked.len(), "", true);
         for o in &blocked {
-            exp.add_row(&outcome_row(o));
+            content.append(&blocked_card(o));
         }
-        results.append(&card(&exp));
+        results.append(&sec);
     }
 
-    // To install, expanded. Each package is its own expandable card showing
-    // the decision chain, with a per-package "Install" button.
+    // To install, expanded. Each package is its own card showing the decision
+    // chain; the first opens by default so the chain is visible at a glance.
     let allowed: Vec<&Outcome> = outcomes
         .iter()
         .filter(|o| o.decision == Decision::Allow)
         .collect();
     if !allowed.is_empty() {
-        let exp = group_expander(
-            &t!("To install"),
-            &t!("AUR packages cleared for installation — install one, or all at once via “Update everything”."),
-            allowed.len(),
-            true,
-            "emblem-ok-symbolic",
-        );
+        let (sec, content) = section(&t!("To install"), allowed.len(), "", true);
         for (i, o) in allowed.iter().enumerate() {
-            let pkg = allowed_card(o, overlay);
-            pkg.set_expanded(i == 0); // first one open, so the chain is visible at a glance
-            exp.add_row(&pkg);
+            content.append(&package_card(o, overlay, i == 0));
         }
-        results.append(&card(&exp));
+        results.append(&sec);
     }
 
-    // Delayed and official repos: collapsed by default (informational).
+    // On hold: a compact grouped list with the countdown per package.
     let delayed: Vec<&Outcome> = outcomes
         .iter()
         .filter(|o| matches!(o.decision, Decision::Delayed(_)))
         .collect();
     if !delayed.is_empty() {
-        let exp = group_expander(
-            &t!("On hold"),
-            &t!("AUR updates still maturing under the configured delay — not installable yet."),
-            delayed.len(),
-            false,
-            "appointment-soon-symbolic",
-        );
-        for o in &delayed {
-            exp.add_row(&outcome_row(o));
-        }
-        results.append(&card(&exp));
+        let (sec, content) = section(&t!("On hold"), delayed.len(), "", true);
+        content.append(&waiting_list(&delayed, now));
+        results.append(&sec);
     }
 
+    // Official repos: collapsed by default (out of aurveto's scope).
     if !official.is_empty() {
-        let exp = group_expander(
+        let (sec, content) = section(
             &t!("Official repositories (signed)"),
-            &t!("Signed packages, outside aurveto's review — installed via `pacman -Syu`."),
             official.len(),
+            &t!("outside review scope"),
             false,
-            "package-x-generic-symbolic",
         );
-        for line in official {
-            exp.add_row(&info_row(line));
-        }
-        results.append(&card(&exp));
+        content.append(&official_list(official));
+        results.append(&sec);
     }
 }
 
@@ -872,9 +928,11 @@ fn summary_ring(summary: &pipeline::Summary) -> gtk::Box {
 }
 
 /// One-sentence recap of the verdicts, with the official (out-of-scope) count.
+/// The three counts are colored to echo the donut segments (blue / orange /
+/// grey); the color literals live in the msgid so translators keep them.
 fn recap_text(summary: &pipeline::Summary, official: usize) -> String {
     let mut s = t!(
-        "<b>{}</b> ready to install · <b>{}</b> maturing under the delay · <b>{}</b> blocked.",
+        "<span foreground='#2f79db'><b>{}</b> ready</span> to install, <span foreground='#cf8021'><b>{}</b> maturing</span> under the delay, <span foreground='#8a8784'><b>{}</b> blocked</span>.",
         summary.allowed,
         summary.delayed,
         summary.blocked
@@ -906,7 +964,7 @@ fn draw_ring(cr: &gtk::cairo::Context, w: i32, h: i32, segs: &[RingSeg], focus: 
     } else {
         0.0
     };
-    cr.set_source_rgba(fg, fg, fg, 0.12);
+    cr.set_source_rgba(fg, fg, fg, 0.10);
     cr.set_line_width(RING_WIDTH);
     cr.arc(cx, cy, radius, 0.0, std::f64::consts::TAU);
     let _ = cr.stroke();
@@ -991,25 +1049,405 @@ fn legend_item(
     item
 }
 
-/// Collapsible row grouping packages of the same category (title + counter),
-/// with a plain-language explanation of what the category means — the
-/// category name alone ("on hold", "to install"...) isn't self-explanatory.
-fn group_expander(
-    title: &str,
-    description: &str,
-    count: usize,
-    expanded: bool,
-    icon: &str,
-) -> adw::ExpanderRow {
-    let exp = adw::ExpanderRow::builder()
-        .title(title)
-        .subtitle(t!("{} packages — {}", count, description))
-        .expanded(expanded)
+/// The app's brand mark for the header: the blue shield + white check from
+/// `data/fr.xhelliom.AurVeto.svg`, drawn with cairo so no external icon asset
+/// needs to be resolved at runtime. Coordinates are the SVG's 128px viewBox,
+/// scaled down to `LOGO_SIZE`.
+fn brand_logo() -> gtk::DrawingArea {
+    let area = gtk::DrawingArea::builder()
+        .width_request(LOGO_SIZE)
+        .height_request(LOGO_SIZE)
+        .valign(gtk::Align::Center)
         .build();
-    exp.set_subtitle_lines(0); // the explanation must not be truncated
-    exp.add_prefix(&gtk::Image::from_icon_name(icon));
-    exp
+    area.set_draw_func(|_, cr, w, h| {
+        let scale = w.min(h) as f64 / 128.0;
+        cr.scale(scale, scale);
+
+        // Shield outline (vertical gradient fill, dark blue stroke).
+        cr.move_to(64.0, 12.0);
+        cr.line_to(106.0, 26.0);
+        cr.line_to(106.0, 62.0);
+        cr.curve_to(106.0, 92.0, 88.0, 110.0, 64.0, 118.0);
+        cr.curve_to(40.0, 110.0, 22.0, 92.0, 22.0, 62.0);
+        cr.line_to(22.0, 26.0);
+        cr.close_path();
+        let grad = gtk::cairo::LinearGradient::new(0.0, 12.0, 0.0, 118.0);
+        grad.add_color_stop_rgb(0.0, 0.110, 0.443, 0.847); // #1c71d8
+        grad.add_color_stop_rgb(1.0, 0.102, 0.373, 0.706); // #1a5fb4
+        let _ = cr.set_source(&grad);
+        let _ = cr.fill_preserve();
+        cr.set_source_rgb(0.051, 0.231, 0.451); // #0d3b73
+        cr.set_line_width(3.0);
+        let _ = cr.stroke();
+
+        // Validation check.
+        cr.set_line_cap(gtk::cairo::LineCap::Round);
+        cr.set_line_join(gtk::cairo::LineJoin::Round);
+        cr.move_to(44.0, 64.0);
+        cr.line_to(58.0, 78.0);
+        cr.line_to(86.0, 48.0);
+        cr.set_source_rgb(1.0, 1.0, 1.0);
+        cr.set_line_width(10.0);
+        let _ = cr.stroke();
+    });
+    area
 }
+
+// =====================================================================
+// Categorized lists
+// =====================================================================
+
+/// A left-aligned label carrying a single CSS class.
+fn styled(text: &str, class: &str) -> gtk::Label {
+    let l = gtk::Label::builder().label(text).xalign(0.0).build();
+    l.add_css_class(class);
+    l
+}
+
+/// A colored status pill (green "safe" / red "blocked").
+fn pill(text: &str, class: &str) -> gtk::Label {
+    let l = gtk::Label::new(Some(text));
+    l.add_css_class(class);
+    l.set_valign(gtk::Align::Center);
+    l
+}
+
+/// A small colored status dot (`class` = `ag-dot-orange`/`-grey`/…), sized by
+/// CSS and vertically centered in its row.
+fn status_dot(class: &str) -> gtk::Box {
+    let d = gtk::Box::new(Orientation::Horizontal, 0);
+    d.add_css_class("ag-dot");
+    d.add_css_class(class);
+    d.set_halign(gtk::Align::Center);
+    d.set_valign(gtk::Align::Center);
+    d
+}
+
+/// A collapsible section: an uppercase toggle header ("TITLE · N" with a ▼/▶
+/// caret and an optional grey suffix) over a content box. Returns
+/// `(outer, content)`; the caller fills `content`. Clicking the header toggles
+/// the content's visibility.
+fn section(title: &str, count: usize, suffix: &str, expanded: bool) -> (gtk::Box, gtk::Box) {
+    let content = gtk::Box::builder()
+        .orientation(Orientation::Vertical)
+        .spacing(8)
+        .visible(expanded)
+        .build();
+
+    let caret = gtk::Label::new(Some(if expanded { "▼" } else { "▶" }));
+    caret.add_css_class("ag-caret");
+    let label = gtk::Label::new(Some(&format!("{} · {}", title.to_uppercase(), count)));
+    label.add_css_class("ag-section-label");
+
+    let head = gtk::Box::new(Orientation::Horizontal, 8);
+    head.append(&caret);
+    head.append(&label);
+    if !suffix.is_empty() {
+        let s = gtk::Label::new(Some(suffix));
+        s.add_css_class("ag-section-suffix");
+        s.set_valign(gtk::Align::Center);
+        head.append(&s);
+    }
+
+    let header = gtk::Button::builder()
+        .css_classes(["ag-section"])
+        .halign(gtk::Align::Start)
+        .child(&head)
+        .build();
+    {
+        let content = content.clone();
+        let caret = caret.clone();
+        header.connect_clicked(move |_| {
+            let v = !content.is_visible();
+            content.set_visible(v);
+            caret.set_label(if v { "▼" } else { "▶" });
+        });
+    }
+
+    let outer = gtk::Box::builder()
+        .orientation(Orientation::Vertical)
+        .spacing(10)
+        .build();
+    outer.append(&header);
+    outer.append(&content);
+    (outer, content)
+}
+
+/// One "to install" package as a card: the header carries name / version arrow /
+/// details, a green "safe" pill and a dark Install button; clicking the text
+/// reveals the decision chain (whitelist / anti-revert / scan / AI) that
+/// cleared it. `expanded` opens the chain immediately.
+fn package_card(o: &Outcome, overlay: &adw::ToastOverlay, expanded: bool) -> gtk::Box {
+    let name = styled(&o.update.name, "ag-pkg-name");
+    let ver = styled(
+        &format!("{} → {}", o.update.old_ver, allow_target(o)),
+        "ag-pkg-ver",
+    );
+    let text = gtk::Box::new(Orientation::Vertical, 3);
+    text.set_halign(gtk::Align::Start);
+    text.append(&name);
+    text.append(&ver);
+    let detail = allow_detail(o);
+    if !detail.is_empty() {
+        text.append(&styled(&detail, "ag-pkg-sub"));
+    }
+
+    // Decision chain, revealed / hidden by clicking the package text.
+    let chain = gtk::Box::new(Orientation::Vertical, 9);
+    chain.add_css_class("ag-chain");
+    chain.set_visible(expanded);
+    for step in &o.steps {
+        chain.append(&chain_step_row(step));
+    }
+
+    // Leading caret advertising (and reflecting) the expandable chain.
+    let caret = gtk::Label::new(Some(if expanded { "▼" } else { "▶" }));
+    caret.add_css_class("ag-caret");
+    caret.set_valign(gtk::Align::Center);
+    let tog_content = gtk::Box::new(Orientation::Horizontal, 9);
+    tog_content.append(&caret);
+    tog_content.append(&text);
+
+    let toggler = gtk::Button::builder()
+        .css_classes(["ag-toggler"])
+        .hexpand(true)
+        .halign(gtk::Align::Fill)
+        .child(&tog_content)
+        .build();
+    {
+        let chain = chain.clone();
+        let caret = caret.clone();
+        toggler.connect_clicked(move |_| {
+            let v = !chain.is_visible();
+            chain.set_visible(v);
+            caret.set_label(if v { "▼" } else { "▶" });
+        });
+    }
+
+    let install = gtk::Button::builder()
+        .label(t!("Install"))
+        .css_classes(["ag-install"])
+        .valign(gtk::Align::Center)
+        .build();
+    {
+        let name = o.update.name.clone();
+        let overlay = overlay.clone();
+        install.connect_clicked(move |_| install_one(&name, &overlay));
+    }
+
+    let head = gtk::Box::new(Orientation::Horizontal, 12);
+    head.append(&toggler);
+    head.append(&pill(&t!("✓ safe"), "ag-pill-safe"));
+    head.append(&install);
+
+    let cardbox = gtk::Box::new(Orientation::Vertical, 0);
+    cardbox.add_css_class("ag-card");
+    cardbox.append(&head);
+    cardbox.append(&chain);
+    cardbox
+}
+
+/// A blocked package as a card: name, the block reason, a red "blocked" pill,
+/// and the (failed) decision chain shown below.
+fn blocked_card(o: &Outcome) -> gtk::Box {
+    let reason = match &o.decision {
+        Decision::Blocked(r) => r.clone(),
+        _ => String::new(),
+    };
+    let name = styled(&o.update.name, "ag-pkg-name");
+    let sub = styled(&reason, "ag-step-note");
+    sub.set_wrap(true);
+    let text = gtk::Box::new(Orientation::Vertical, 3);
+    text.set_halign(gtk::Align::Start);
+    text.set_hexpand(true);
+    text.append(&name);
+    text.append(&sub);
+
+    let head = gtk::Box::new(Orientation::Horizontal, 12);
+    head.append(&text);
+    head.append(&pill(&t!("blocked"), "ag-pill-blocked"));
+
+    let chain = gtk::Box::new(Orientation::Vertical, 9);
+    chain.add_css_class("ag-chain");
+    for step in &o.steps {
+        chain.append(&chain_step_row(step));
+    }
+
+    let cardbox = gtk::Box::new(Orientation::Vertical, 0);
+    cardbox.add_css_class("ag-card");
+    cardbox.append(&head);
+    if !o.steps.is_empty() {
+        cardbox.append(&chain);
+    }
+    cardbox
+}
+
+/// One decision-chain link: a green (or red/grey) bulleted icon, the step name,
+/// and the pipeline's own explanation (never re-derived in the frontend).
+fn chain_step_row(step: &ChainStep) -> gtk::Box {
+    let row = gtk::Box::new(Orientation::Horizontal, 10);
+    row.append(&chain_bullet(step.status));
+    row.append(&styled(&step.name, "ag-step-name"));
+    if !step.note.is_empty() {
+        let note = styled(&format!("— {}", step.note), "ag-step-note");
+        note.set_wrap(true);
+        row.append(&note);
+    }
+    row
+}
+
+/// A decision-chain step bullet, drawn with cairo: a tinted disc plus a mark
+/// (check / cross / dash) whose geometry is centered on the disc — unlike a
+/// text glyph, whose font metrics push it off-center inside the circle.
+fn chain_bullet(status: StepStatus) -> gtk::DrawingArea {
+    let area = gtk::DrawingArea::builder()
+        .width_request(BULLET_SIZE)
+        .height_request(BULLET_SIZE)
+        .valign(gtk::Align::Center)
+        .build();
+    area.set_draw_func(move |_, cr, w, h| {
+        let n = w.min(h) as f64;
+        let c = n / 2.0;
+
+        // Tinted disc + the mark's stroke color, per status.
+        let (fill, stroke): (Rgba, Rgb) = match status {
+            StepStatus::Passed => ((0.227, 0.639, 0.361, 0.16), (0.184, 0.502, 0.286)),
+            StepStatus::Failed => ((0.784, 0.192, 0.184, 0.15), (0.690, 0.165, 0.157)),
+            StepStatus::Skipped => ((0.078, 0.078, 0.071, 0.08), (0.078, 0.078, 0.071)),
+        };
+        cr.arc(c, c, c, 0.0, std::f64::consts::TAU);
+        cr.set_source_rgba(fill.0, fill.1, fill.2, fill.3);
+        let _ = cr.fill();
+
+        cr.set_line_width(n * 0.095);
+        cr.set_line_cap(gtk::cairo::LineCap::Round);
+        cr.set_line_join(gtk::cairo::LineJoin::Round);
+        match status {
+            StepStatus::Passed => {
+                cr.set_source_rgb(stroke.0, stroke.1, stroke.2);
+                cr.move_to(n * 0.30, n * 0.52);
+                cr.line_to(n * 0.44, n * 0.66);
+                cr.line_to(n * 0.72, n * 0.35);
+            }
+            StepStatus::Failed => {
+                cr.set_source_rgb(stroke.0, stroke.1, stroke.2);
+                cr.move_to(n * 0.35, n * 0.35);
+                cr.line_to(n * 0.65, n * 0.65);
+                cr.move_to(n * 0.65, n * 0.35);
+                cr.line_to(n * 0.35, n * 0.65);
+            }
+            StepStatus::Skipped => {
+                // A muted dash: the step did not run.
+                cr.set_source_rgba(stroke.0, stroke.1, stroke.2, 0.55);
+                cr.move_to(n * 0.32, c);
+                cr.line_to(n * 0.68, c);
+            }
+        }
+        let _ = cr.stroke();
+    });
+    area
+}
+
+/// The "on hold" list: a grouped card of pending packages (orange dot, name,
+/// latest published version, and the countdown). Only the first
+/// `VISIBLE_WAITING` show; the rest fold behind a "+N more" reveal.
+fn waiting_list(delayed: &[&Outcome], now: u64) -> gtk::Box {
+    let list = gtk::Box::new(Orientation::Vertical, 1);
+    list.add_css_class("ag-list");
+
+    let mut hidden: Vec<gtk::Box> = Vec::new();
+    for (i, o) in delayed.iter().enumerate() {
+        let row = waiting_row(o, now);
+        if i >= VISIBLE_WAITING {
+            row.set_visible(false);
+            hidden.push(row.clone());
+        }
+        list.append(&row);
+    }
+
+    if !hidden.is_empty() {
+        let more = gtk::Button::builder()
+            .label(t!("+ {} more maturing packages", hidden.len()))
+            .css_classes(["ag-more"])
+            .build();
+        more.connect_clicked(move |b| {
+            for r in &hidden {
+                r.set_visible(true);
+            }
+            b.set_visible(false);
+        });
+        list.append(&more);
+    }
+    list
+}
+
+/// One pending-package row for the "on hold" list.
+fn waiting_row(o: &Outcome, now: u64) -> gtk::Box {
+    let row = gtk::Box::new(Orientation::Horizontal, 12);
+    row.add_css_class("ag-row");
+    row.append(&status_dot("ag-dot-orange"));
+
+    let text = gtk::Box::new(Orientation::Vertical, 1);
+    text.set_hexpand(true);
+    text.set_halign(gtk::Align::Start);
+    text.append(&styled(&o.update.name, "ag-row-title"));
+    if !o.update.new_ver.is_empty() {
+        text.append(&styled(
+            &t!("latest published: {}", o.update.new_ver),
+            "ag-row-sub",
+        ));
+    }
+    row.append(&text);
+
+    let meta = styled(&waiting_days(o, now), "ag-row-meta");
+    meta.set_valign(gtk::Align::Center);
+    row.append(&meta);
+    row
+}
+
+/// Countdown label of a pending package ("~N d left", or "on hold" if the date
+/// is unknown).
+fn waiting_days(o: &Outcome, now: u64) -> String {
+    match o.eligible_at {
+        Some(ts) if ts > now => t!(
+            "{}d left",
+            ts.saturating_sub(now).div_ceil(aur::SECS_PER_DAY)
+        ),
+        _ => t!("on hold"),
+    }
+}
+
+/// The "official repositories" list: grey-dotted rows (name, version, the
+/// `pacman -Syu` that installs them). Each `line` comes from `checkupdates`
+/// ("name oldver -> newver"), from which we surface the name and target version.
+fn official_list(lines: &[String]) -> gtk::Box {
+    let list = gtk::Box::new(Orientation::Vertical, 1);
+    list.add_css_class("ag-list");
+    for line in lines {
+        let mut parts = line.split_whitespace();
+        let name = parts.next().unwrap_or(line);
+        let ver = line.split_whitespace().last().unwrap_or("");
+
+        let row = gtk::Box::new(Orientation::Horizontal, 12);
+        row.add_css_class("ag-row");
+        row.append(&status_dot("ag-dot-grey"));
+        let name_lbl = styled(name, "ag-row-title");
+        name_lbl.set_hexpand(true);
+        row.append(&name_lbl);
+        let ver_lbl = styled(ver, "ag-pkg-ver");
+        ver_lbl.set_valign(gtk::Align::Center);
+        row.append(&ver_lbl);
+        let cmd = styled("pacman -Syu", "ag-row-meta");
+        cmd.set_valign(gtk::Align::Center);
+        row.append(&cmd);
+        list.append(&row);
+    }
+    list
+}
+
+// =====================================================================
+// Transient / empty states
+// =====================================================================
 
 fn info_row(text: &str) -> adw::ActionRow {
     adw::ActionRow::builder().title(text).build()
@@ -1026,8 +1464,8 @@ fn loading_row() -> adw::ActionRow {
 }
 
 /// Wraps a single row/expander in its own rounded "card" (a one-item
-/// boxed-list), so each category is visually separated from the others
-/// instead of all being glued into one shared list.
+/// boxed-list); used for the transient / empty states (loading, error,
+/// "everything up to date").
 fn card(child: &impl IsA<gtk::Widget>) -> gtk::ListBox {
     let list = gtk::ListBox::builder()
         .selection_mode(gtk::SelectionMode::None)
@@ -1037,10 +1475,10 @@ fn card(child: &impl IsA<gtk::Widget>) -> gtk::ListBox {
     list
 }
 
-/// Registers the badge stylesheet for the whole display (once).
+/// Registers the theme stylesheet for the whole display (once).
 fn install_css() {
     let provider = gtk::CssProvider::new();
-    provider.load_from_data(BADGE_CSS);
+    provider.load_from_data(THEME_CSS);
     if let Some(display) = gtk::gdk::Display::default() {
         gtk::style_context_add_provider_for_display(
             &display,
@@ -1048,15 +1486,6 @@ fn install_css() {
             gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
         );
     }
-}
-
-/// Colored status pill: `variant` = CSS class (`ag-ok`/`ag-warn`/`ag-err`).
-fn badge(text: &str, variant: &str) -> gtk::Label {
-    gtk::Label::builder()
-        .label(text)
-        .valign(gtk::Align::Center)
-        .css_classes(["ag-badge", variant])
-        .build()
 }
 
 /// "Nothing to do" row: confirms everything is up to date AND, in the subtitle,
@@ -1084,13 +1513,9 @@ fn up_to_date_row(cfg: &Config) -> adw::ActionRow {
     row
 }
 
-/// Formats a Unix timestamp as a short local date (via glib, no dependency).
-fn format_date(ts: u64) -> String {
-    glib::DateTime::from_unix_local(ts as i64)
-        .and_then(|d| d.format("%x"))
-        .map(|s| s.to_string())
-        .unwrap_or_default()
-}
+// =====================================================================
+// Verdict data helpers (formatting only — no decisions taken here)
+// =====================================================================
 
 /// Label for the age of the targeted deferred revision (target commit date).
 /// `committed_at == 0` means the date is unreadable: we say so rather than lie.
@@ -1119,23 +1544,8 @@ fn allow_target(o: &Outcome) -> String {
     }
 }
 
-/// Version that will actually be installed at the deadline of a pending package.
-fn delayed_target(o: &Outcome) -> String {
-    o.eligible_version
-        .as_deref()
-        .filter(|v| !v.is_empty())
-        .map(str::to_string)
-        .unwrap_or_else(|| {
-            if o.update.new_ver.is_empty() {
-                o.update.old_ver.clone()
-            } else {
-                o.update.new_ver.clone()
-            }
-        })
-}
-
-/// Subtitle (secondary details) of an allowed package: current version, age of
-/// the lag revision, and latest published version if it differs from the installed one.
+/// Secondary details of an allowed package: current version, age of the lag
+/// revision, and latest published version if it differs from the installed one.
 fn allow_detail(o: &Outcome) -> String {
     let mut parts = Vec::new();
     if !o.update.old_ver.is_empty() {
@@ -1151,148 +1561,6 @@ fn allow_detail(o: &Outcome) -> String {
         parts.push(t!("whitelisted"));
     }
     parts.join("  ·  ")
-}
-
-/// Subtitle (secondary details) of a pending package: availability date,
-/// current version, and latest published version if it differs from the target.
-fn delayed_detail(o: &Outcome, days_since_mod: u64, now: u64) -> String {
-    let mut parts = Vec::new();
-    if let Some(ts) = o.eligible_at {
-        if ts > now {
-            parts.push(t!("available on {}", format_date(ts)));
-        }
-    }
-    if !o.update.old_ver.is_empty() {
-        parts.push(t!("current {}", o.update.old_ver));
-    }
-    let target = delayed_target(o);
-    if !o.update.new_ver.is_empty() && o.update.new_ver != target {
-        parts.push(t!(
-            "latest {} published {}d ago",
-            o.update.new_ver,
-            days_since_mod
-        ));
-    }
-    parts.join("  ·  ")
-}
-
-/// Countdown badge of a pending package ("~N d", orange).
-fn delayed_badge(o: &Outcome, now: u64) -> gtk::Label {
-    match o.eligible_at {
-        Some(ts) if ts > now => {
-            let days = ts.saturating_sub(now).div_ceil(aur::SECS_PER_DAY);
-            badge(&t!("~{}d", days), "ag-warn")
-        }
-        _ => badge(&t!("on hold"), "ag-warn"),
-    }
-}
-
-/// One "to install" package as an expandable card: the header carries the
-/// target version, a "safe" chip and an Install button; expanding reveals the
-/// decision chain that cleared it (whitelist / delay / anti-revert / scan / AI).
-fn allowed_card(o: &Outcome, overlay: &adw::ToastOverlay) -> adw::ExpanderRow {
-    let exp = adw::ExpanderRow::builder()
-        .title(format!("{} → {}", o.update.name, allow_target(o)))
-        .subtitle(allow_detail(o))
-        .build();
-    exp.set_use_markup(false); // literal package names/versions
-    exp.set_subtitle_lines(0);
-    exp.add_prefix(&gtk::Image::from_icon_name("emblem-ok-symbolic"));
-    exp.add_suffix(&badge(&t!("✓ safe"), "ag-ok"));
-
-    let install = gtk::Button::builder()
-        .label(t!("Install"))
-        .valign(gtk::Align::Center)
-        .css_classes(["suggested-action", "pill"])
-        .build();
-    {
-        let name = o.update.name.clone();
-        let overlay = overlay.clone();
-        install.connect_clicked(move |_| install_one(&name, &overlay));
-    }
-    exp.add_suffix(&install);
-
-    for step in &o.steps {
-        exp.add_row(&chain_step_row(step));
-    }
-    exp
-}
-
-/// One decision-chain link as a sub-row: a colored status icon, the step name,
-/// and the pipeline's own explanation (never re-derived in the frontend).
-fn chain_step_row(step: &ChainStep) -> adw::ActionRow {
-    let (icon, style) = match step.status {
-        StepStatus::Passed => ("emblem-ok-symbolic", "success"),
-        StepStatus::Skipped => ("list-remove-symbolic", "dim-label"),
-        StepStatus::Failed => ("dialog-error-symbolic", "error"),
-    };
-    let row = adw::ActionRow::builder()
-        .title(&step.name)
-        .subtitle(&step.note)
-        .build();
-    row.set_use_markup(false); // literal reasons (may contain markup-like chars)
-    row.set_subtitle_lines(0);
-    let img = gtk::Image::from_icon_name(icon);
-    img.add_css_class(style);
-    row.add_prefix(&img);
-    row
-}
-
-/// A verdict row: title = "package → target version" (clearly visible), colored
-/// status badge on the right, greyed-out details in the subtitle. Badge color +
-/// title = "which version, which status" grasped at a glance.
-fn outcome_row(o: &Outcome) -> adw::ActionRow {
-    let now = aur::now_secs();
-    let row = adw::ActionRow::builder().build();
-    row.set_use_markup(false); // literal versions/reasons (no escaping required)
-    row.set_subtitle_lines(0); // sometimes long details: do not truncate
-    let icon = match &o.decision {
-        Decision::Allow => {
-            row.set_title(&format!("{} → {}", o.update.name, allow_target(o)));
-            row.set_subtitle(&allow_detail(o));
-            row.add_suffix(&badge(&t!("to install"), "ag-ok"));
-            "emblem-ok-symbolic"
-        }
-        Decision::Delayed(d) => {
-            row.set_title(&format!("{} → {}", o.update.name, delayed_target(o)));
-            row.set_subtitle(&delayed_detail(o, *d, now));
-            row.add_suffix(&delayed_badge(o, now));
-            "appointment-soon-symbolic"
-        }
-        Decision::Blocked(reason) => {
-            row.set_title(&o.update.name);
-            row.set_subtitle(&t!("BLOCKED — {}", reason));
-            row.add_suffix(&badge(&t!("blocked"), "ag-err"));
-            "dialog-warning-symbolic"
-        }
-    };
-    if let Some(note) = &o.ai_note {
-        row.add_suffix(&ai_badge(note));
-    }
-    row.add_prefix(&gtk::Image::from_icon_name(icon));
-    row
-}
-
-/// "AI" badge shown whenever the AI reviewed this package. Hidden by default
-/// in the sense that nothing is shown until clicked — the reviewer's own
-/// explanation only appears in a popover, so it stays out of the way once the
-/// review is trusted, but stays one click away for first uses.
-fn ai_badge(note: &str) -> gtk::MenuButton {
-    let label = gtk::Label::builder()
-        .label(note)
-        .wrap(true)
-        .max_width_chars(48)
-        .margin_top(8)
-        .margin_bottom(8)
-        .margin_start(8)
-        .margin_end(8)
-        .build();
-    gtk::MenuButton::builder()
-        .label(t!("AI"))
-        .css_classes(["ag-badge", "ag-ok", "flat"])
-        .valign(gtk::Align::Center)
-        .popover(&gtk::Popover::builder().child(&label).build())
-        .build()
 }
 
 /// Wraps a string in single quotes to inject it safely into a `bash -c` line
