@@ -610,6 +610,21 @@ msgstr "<b>{}</b> prêts à installer · <b>{}</b> en maturation sous le délai 
 msgid "{} signed official packages are out of scope."
 msgstr "{} paquets officiels signés hors périmètre."
 
+msgid "<span foreground='#2f79db'><b>{}</b> ready</span> to install, <span foreground='#cf8021'><b>{}</b> maturing</span> under the delay, <span foreground='#8a8784'><b>{}</b> blocked</span>."
+msgstr "<span foreground='#2f79db'><b>{}</b> prêts</span> à installer, <span foreground='#cf8021'><b>{}</b> en maturation</span> sous le délai, <span foreground='#8a8784'><b>{}</b> bloqué</span>."
+
+msgid "latest published: {}"
+msgstr "dernière publiée : {}"
+
+msgid "{}d left"
+msgstr "{}j restants"
+
+msgid "+ {} more maturing packages"
+msgstr "+ {} autres paquets en maturation"
+
+msgid "outside review scope"
+msgstr "hors périmètre de review"
+
 msgid "Static scan"
 msgstr "Scan statique"
 
