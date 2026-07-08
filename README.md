@@ -127,7 +127,23 @@ translations:
 po/install.sh            # compiles po/*.po → ~/.local/share/locale/<lang>/…
 ```
 
-## Build
+## Installation
+
+### From the AUR (recommended)
+
+`aurveto` is published on the AUR in two flavours; both pull in `gtk4` /
+`libadwaita` automatically and install the binaries, the desktop entry, the
+icon and the translations:
+
+```bash
+yay -S aurveto-bin   # precompiled binaries (x86_64, fastest)
+yay -S aurveto       # builds from source
+```
+
+Optionally install [`aur-scan`](https://github.com/KiefStudioMA/ks-aur-scanner)
+to enable the static-analysis layer.
+
+### From source
 
 ```bash
 # CLI + TUI + GUI (default; requires gtk4 and libadwaita ≥ 1.4)

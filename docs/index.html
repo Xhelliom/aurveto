@@ -264,15 +264,15 @@ AUR updates: 5 (delay 14d, AI review enabled)
 <section id="install">
   <div class="container">
     <h2 class="section-title reveal">Install</h2>
-    <p class="section-sub reveal">Requires Rust, an AUR helper (yay/paru) and — optionally — <code>aur-scan</code> for the static layer. One <code>aurveto install</code> drops the binaries, a desktop entry and an optional update-notification timer into place.</p>
+    <p class="section-sub reveal">Straight from the AUR with your favourite helper — <code>-bin</code> for precompiled binaries or build from source. Optionally add <code>aur-scan</code> for the static layer.</p>
     <div class="install-card reveal">
-<div class="code"><span class="c"># clone &amp; build</span>
-git clone https://github.com/Xhelliom/aurveto
-cd aurveto
-cargo build <span class="a">--release</span>
+<div class="code"><span class="c"># from the AUR — installs binaries, desktop entry, icon &amp; translations</span>
+yay <span class="a">-S</span> aurveto-bin      <span class="c"># precompiled (x86_64, fastest)</span>
+yay <span class="a">-S</span> aurveto          <span class="c"># builds from source</span>
 
-<span class="c"># one-stop: binaries, menu entry, icon, translations, notify timer</span>
-./target/release/aurveto <span class="a">install</span>
+<span class="c"># or from source</span>
+git clone https://github.com/Xhelliom/aurveto &amp;&amp; cd aurveto
+cargo build <span class="a">--release</span> &amp;&amp; ./target/release/aurveto <span class="a">install</span>
 
 <span class="c"># use it</span>
 aurveto check          <span class="c"># report — installs nothing</span>
