@@ -1,0 +1,11 @@
+--- bar (installed)
++++ bar (AUR)
+-source=("https://github.com/vendorcorp/bar/archive/v${pkgver}.tar.gz")
+-sha256sums=('7a8b9c0d1e2f30415263748596a7b8c9d0e1f2a3b4c5d6e7f8091a2b3c4d5e6f')
++source=("git+https://github.com/vendorcorp/bar.git#tag=v${pkgver}")
++sha256sums=('SKIP')
+ build() {
+-  cd "$srcdir/bar-$pkgver"
++  cd "$srcdir/bar"
+   cargo build --release --locked
+ }

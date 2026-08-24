@@ -1,0 +1,9 @@
+--- bar-bin (installed)
++++ bar-bin (AUR)
+ package() {
+   install -Dm755 "$srcdir/usr/bin/bar" "$pkgdir/usr/bin/bar"
++  install -Dm644 "$srcdir/usr/share/applications/bar.desktop" \
++    "$pkgdir/usr/share/applications/bar.desktop"
++  install -Dm644 "$srcdir/usr/share/icons/hicolor/256x256/apps/bar.png" \
++    "$pkgdir/usr/share/icons/hicolor/256x256/apps/bar.png"
+ }

