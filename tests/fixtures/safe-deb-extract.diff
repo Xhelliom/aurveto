@@ -1,0 +1,10 @@
+--- baz-bin (installed)
++++ baz-bin (AUR)
++prepare() {
++  bsdtar -xf data.tar.xz -C "$srcdir"
++  sed -i 's|/opt/baz/baz|/usr/bin/baz|' "$srcdir/usr/share/applications/baz.desktop"
++}
+ package() {
+   cp -a "$srcdir/opt" "$pkgdir/opt"
++  ln -s /opt/baz/baz "$pkgdir/usr/bin/baz"
+ }

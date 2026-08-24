@@ -1,0 +1,6 @@
+--- foo-bin (installed)
++++ foo-bin (AUR)
+ pkgver=3.1.0
+-source=("https://github.com/vendorcorp/foo/releases/download/v${pkgver}/foo_${pkgver}_amd64.deb")
++source=("https://objects.githubusercontent.com/github-production-release-asset/vendorcorp/foo/v${pkgver}/foo_${pkgver}_amd64.deb")
+ sha256sums=('4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c')

