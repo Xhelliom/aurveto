@@ -195,9 +195,16 @@ pub fn fetch_remote_pkgbuild(name: &str) -> Result<String> {
     Ok(body)
 }
 
-/// Tries to locate the local PKGBUILD (currently installed version) in the
-/// helper's cache. Returns its contents if found.
-pub fn local_pkgbuild(name: &str) -> Option<String> {
+/// Tries to locate the local PKGBUILD of the **installed** version in the
+/// helper's cache.
+///
+/// The cached copy is only trustworthy when its own version matches
+/// `installed_version`: the helper refreshes its clone whenever it checks for
+/// updates, so the cached PKGBUILD is frequently ALREADY the new revision.
+/// Diffing against that would produce an empty diff and clear the package
+/// without any review. Fail-closed: an unmatched cache is treated as "no
+/// reference", which triggers a full inspection instead.
+pub fn local_pkgbuild(name: &str, installed_version: &str) -> Option<String> {
     let home = dirs::home_dir()?;
     let candidates = [
         home.join(".cache/yay").join(name).join("PKGBUILD"),
@@ -205,7 +212,9 @@ pub fn local_pkgbuild(name: &str) -> Option<String> {
     ];
     for path in candidates {
         if let Ok(text) = std::fs::read_to_string(&path) {
-            return Some(text);
+            if vercmp(&parse_version(&text), installed_version) == 0 {
+                return Some(text);
+            }
         }
     }
     None
@@ -214,9 +223,9 @@ pub fn local_pkgbuild(name: &str) -> Option<String> {
 /// Builds a unified diff between the local (installed) PKGBUILD and the remote one.
 /// If the local one cannot be found, returns the entire remote PKGBUILD annotated
 /// as a "first inspection".
-pub fn pkgbuild_diff(name: &str) -> Result<String> {
+pub fn pkgbuild_diff(name: &str, installed_version: &str) -> Result<String> {
     let remote = fetch_remote_pkgbuild(name)?;
-    match local_pkgbuild(name) {
+    match local_pkgbuild(name, installed_version) {
         Some(local) if local.trim() == remote.trim() => Ok(String::new()),
         Some(local) => Ok(unified_diff(&local, &remote, name)),
         None => Ok(format!(
@@ -526,8 +535,8 @@ pub fn reverted_since(pkgbase: &str, commit: &str) -> Result<Option<String>> {
 }
 
 /// Unified diff between the installed PKGBUILD and a given new content.
-pub fn diff_against_installed(name: &str, new_pkgbuild: &str) -> String {
-    match local_pkgbuild(name) {
+pub fn diff_against_installed(name: &str, installed_version: &str, new_pkgbuild: &str) -> String {
+    match local_pkgbuild(name, installed_version) {
         Some(local) if local.trim() == new_pkgbuild.trim() => String::new(),
         Some(local) => unified_diff(&local, new_pkgbuild, name),
         None => format!("# No local reference — full inspection:\n{new_pkgbuild}"),

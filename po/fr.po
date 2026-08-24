@@ -637,8 +637,11 @@ msgstr "Anti-retour"
 msgid "Install"
 msgstr "Installer"
 
-msgid "review unavailable"
-msgstr "revue indisponible"
+msgid "review unavailable: {}"
+msgstr "revue indisponible : {}"
+
+msgid "unverified — no guard could inspect this revision"
+msgstr "non vérifié — aucun garde-fou n’a pu inspecter cette révision"
 
 msgid "no diff to review"
 msgstr "aucun diff à examiner"

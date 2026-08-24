@@ -41,7 +41,7 @@ impl Provider {
     /// A reasonable default model for security analysis.
     pub fn default_model(&self) -> &'static str {
         match self {
-            Provider::Groq => "llama-3.3-70b-versatile",
+            Provider::Groq => "openai/gpt-oss-120b",
             Provider::Anthropic => "claude-fable-5",
             Provider::Openai => "gpt-4o",
         }

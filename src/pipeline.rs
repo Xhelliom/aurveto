@@ -188,7 +188,7 @@ fn evaluate_lag(
     // Static scan + AI review on THE REVISION we will install.
     let scan = scan_lagged(&upd.name, &target.pkgbuild, cfg.use_aur_scan);
     let diff = if cfg.ai.enabled {
-        aur::diff_against_installed(&upd.name, &target.pkgbuild)
+        aur::diff_against_installed(&upd.name, &upd.old_ver, &target.pkgbuild)
     } else {
         String::new()
     };
@@ -211,7 +211,7 @@ fn evaluate_lag(
 fn decide_latest(cfg: &Config, upd: Update, age_days: Option<u64>, whitelisted: bool) -> Outcome {
     let scan = scan::scan_package(&upd.name, cfg.use_aur_scan);
     let diff = if cfg.ai.enabled {
-        aur::pkgbuild_diff(&upd.name).unwrap_or_default()
+        aur::pkgbuild_diff(&upd.name, &upd.old_ver).unwrap_or_default()
     } else {
         String::new()
     };
@@ -263,6 +263,11 @@ fn vet(
     if let ScanResult::Flagged(detail) = scan {
         return (Decision::Blocked(t!("aur-scan: {}", detail)), None, steps);
     }
+    // A guard enabled in the config but unable to run returned no verdict: the
+    // revision stays uninspected, and an uninspected revision is a doubt.
+    let scan_unavailable = cfg.use_aur_scan && *scan == ScanResult::Skipped;
+    let mut ai_unavailable = false;
+
     if cfg.ai.enabled && !diff.trim().is_empty() {
         match ai::review_diff(&cfg.ai, name, diff) {
             Ok(v) if !v.safe => {
@@ -287,12 +292,13 @@ fn vet(
                 return (Decision::Allow, Some(v.summary), steps);
             }
             Err(e) => {
-                eprintln!("  (AI review unavailable for {name}: {e})");
+                eprintln!("  (AI review unavailable for {name}: {e:#})");
                 steps.push(ChainStep::new(
                     t!("AI review"),
                     StepStatus::Skipped,
-                    t!("review unavailable"),
+                    t!("review unavailable: {}", format!("{e:#}")),
                 ));
+                ai_unavailable = true;
             }
         }
     } else if cfg.ai.enabled {
@@ -307,6 +313,17 @@ fn vet(
             StepStatus::Skipped,
             t!("disabled"),
         ));
+    }
+
+    // Fail-closed: reaching here means nothing actually inspected this
+    // revision's contents. A guard skipped by choice is the user's call; one
+    // that was asked for and could not run must never read as "safe".
+    if *scan != ScanResult::Clean && (scan_unavailable || ai_unavailable) {
+        return (
+            Decision::Blocked(t!("unverified — no guard could inspect this revision")),
+            None,
+            steps,
+        );
     }
     (Decision::Allow, None, steps)
 }
@@ -479,5 +496,33 @@ mod tests {
     #[test]
     fn summarize_empty_is_zeroed() {
         assert_eq!(summarize(&[]), Summary::default());
+    }
+
+    /// Config with the AI review off, so `vet` never reaches the network.
+    fn offline_cfg(use_aur_scan: bool) -> Config {
+        let mut cfg = Config {
+            use_aur_scan,
+            ..Config::default()
+        };
+        cfg.ai.enabled = false;
+        cfg
+    }
+
+    #[test]
+    fn vet_blocks_when_an_enabled_guard_could_not_run() {
+        let (decision, _, _) = vet(&offline_cfg(true), "pkg", &ScanResult::Skipped, "");
+        assert!(matches!(decision, Decision::Blocked(_)));
+    }
+
+    #[test]
+    fn vet_allows_when_every_guard_is_off_by_choice() {
+        let (decision, _, _) = vet(&offline_cfg(false), "pkg", &ScanResult::Skipped, "");
+        assert_eq!(decision, Decision::Allow);
+    }
+
+    #[test]
+    fn vet_allows_when_the_scan_cleared_the_revision() {
+        let (decision, _, _) = vet(&offline_cfg(true), "pkg", &ScanResult::Clean, "");
+        assert_eq!(decision, Decision::Allow);
     }
 }
