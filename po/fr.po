@@ -637,6 +637,9 @@ msgstr "Anti-retour"
 msgid "Install"
 msgstr "Installer"
 
+msgid "aur-scan is not installed: the static scan cannot run"
+msgstr "aur-scan n’est pas installé : le scan statique ne peut pas s’exécuter"
+
 msgid "review unavailable: {}"
 msgstr "revue indisponible : {}"
 

@@ -19,7 +19,7 @@ use libadwaita::prelude::*;
 
 use aurveto::config::{Config, DelayMode, Provider, Secrets};
 use aurveto::pipeline::{self, ChainStep, Decision, Outcome, StepStatus};
-use aurveto::{aur, deploy, t};
+use aurveto::{aur, deploy, scan, t};
 
 const APP_ID: &str = "fr.xhelliom.AurVeto";
 
@@ -47,6 +47,8 @@ const BULLET_SIZE: i32 = 18;
 /// How many pending packages the "on hold" list shows before folding the rest
 /// behind a "+N more" reveal — matches the mock's compact list.
 const VISIBLE_WAITING: usize = 2;
+/// AUR package providing the `aur-scan` binary the static scan delegates to.
+const AUR_SCAN_PACKAGE: &str = "ks-aur-scanner";
 
 // Donut / legend palette, matching the redesign: blue reads as "ready to
 // install", orange as "maturing under the delay", red as "blocked".
@@ -191,6 +193,16 @@ fn build_ui(app: &adw::Application) {
     let toolbar = adw::ToolbarView::new();
     toolbar.add_top_bar(&header);
 
+    // The static scan is a no-op when its binary is absent, which otherwise only
+    // shows up as an "unavailable" note buried in every decision chain. Surface
+    // it once, with the install one click away.
+    let scan_banner = adw::Banner::builder()
+        .title(t!("aur-scan is not installed: the static scan cannot run"))
+        .button_label(t!("Install"))
+        .revealed(scan_binary_missing(&cfg.borrow()))
+        .build();
+    toolbar.add_top_bar(&scan_banner);
+
     let page = gtk::Box::builder()
         .orientation(Orientation::Vertical)
         .spacing(0)
@@ -284,6 +296,29 @@ fn build_ui(app: &adw::Application) {
         let overlay = overlay.clone();
         settings_btn.connect_clicked(move |_| {
             nav.push(&build_settings_page(&cfg, &overlay));
+        });
+    }
+
+    // Banner action: install the scanner through the configured AUR helper.
+    {
+        let cfg = cfg.clone();
+        let overlay = overlay.clone();
+        scan_banner.connect_button_clicked(move |_| {
+            let helper = sh_quote(&cfg.borrow().helper);
+            let _ = launch_in_terminal(&format!("{helper} -S --needed {AUR_SCAN_PACKAGE}"));
+            overlay.add_toast(adw::Toast::new(&t!(
+                "Installing {} in a terminal",
+                AUR_SCAN_PACKAGE
+            )));
+        });
+    }
+
+    // A check re-reads whether the scanner appeared since the window opened.
+    {
+        let cfg = cfg.clone();
+        let scan_banner = scan_banner.clone();
+        check_btn.connect_clicked(move |_| {
+            scan_banner.set_revealed(scan_binary_missing(&cfg.borrow()));
         });
     }
 
@@ -443,6 +478,13 @@ fn render(
         content.append(&official_list(official));
         results.append(&sec);
     }
+}
+
+/// The static scan is enabled but its binary is missing: the guard silently
+/// does nothing, so the banner offers to install it. A scan disabled on purpose
+/// is the user's call and raises nothing.
+fn scan_binary_missing(cfg: &Config) -> bool {
+    cfg.use_aur_scan && !scan::available()
 }
 
 /// Installs a single AUR package by running `aurveto apply <name>` in a
