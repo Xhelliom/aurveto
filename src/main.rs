@@ -364,8 +364,30 @@ fn cmd_config() -> Result<()> {
     println!(
         "  {:<18}: {}",
         t!("confirm votes"),
-        t!("{} (triggered only on a block)", cfg.ai.confirm_votes)
+        if cfg.ai.provider.is_local() {
+            // Local inference is free, so "safe" verdicts are voted on too.
+            t!(
+                "{} (every verdict, unanimity required)",
+                cfg.ai.confirm_votes
+            )
+        } else {
+            t!("{} (triggered only on a block)", cfg.ai.confirm_votes)
+        }
     );
+    // Only probed for a local provider: it is the one that can be silently down.
+    match ai::local_status(&cfg.ai) {
+        ai::LocalStatus::Ready => {}
+        ai::LocalStatus::NotInstalled => println!(
+            "  {:<18}: {}",
+            t!("local runtime"),
+            t!("{} is not installed", ai::LOCAL_RUNTIME_PACKAGE)
+        ),
+        ai::LocalStatus::NotRunning => println!(
+            "  {:<18}: {}",
+            t!("local runtime"),
+            t!("no server answering at {}", cfg.ai.endpoint())
+        ),
+    }
     println!(
         "  {:<18}: {}",
         t!("whitelist"),

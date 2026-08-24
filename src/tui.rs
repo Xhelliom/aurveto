@@ -28,14 +28,15 @@ const F_SCAN: usize = 3;
 const F_AI: usize = 4;
 const F_PROVIDER: usize = 5;
 const F_MODEL: usize = 6;
-const F_APIKEY: usize = 7;
-const F_VOTES: usize = 8;
-const F_NOTIFY: usize = 9;
-const F_NOTIFY_INTERVAL: usize = 10;
-const F_NOTIFY_SILENT: usize = 11;
-const F_NOTIFY_TEST: usize = 12;
-const F_WHITELIST: usize = 13;
-const FIELDS: usize = 14;
+const F_ENDPOINT: usize = 7;
+const F_APIKEY: usize = 8;
+const F_VOTES: usize = 9;
+const F_NOTIFY: usize = 10;
+const F_NOTIFY_INTERVAL: usize = 11;
+const F_NOTIFY_SILENT: usize = 12;
+const F_NOTIFY_TEST: usize = 13;
+const F_WHITELIST: usize = 14;
+const FIELDS: usize = 15;
 
 const DELAY_MAX: u64 = 365;
 const VOTES_MIN: u32 = 1;
@@ -135,6 +136,7 @@ impl App {
             (t!("AI review"), onoff(self.cfg.ai.enabled)),
             (t!("AI provider"), format!("{:?}", self.cfg.ai.provider)),
             (t!("Model"), self.model_display()),
+            (t!("Local endpoint"), self.endpoint_display()),
             (t!("API key"), self.apikey_display()),
             (
                 t!("Confirmation votes"),
@@ -165,6 +167,15 @@ impl App {
         }
     }
 
+    /// The endpoint only matters for the local provider; say so rather than
+    /// showing a URL that will not be called.
+    fn endpoint_display(&self) -> String {
+        if self.cfg.ai.provider != Provider::Local {
+            return t!("(local provider only)");
+        }
+        self.cfg.ai.endpoint()
+    }
+
     fn apikey_display(&self) -> String {
         let p = self.cfg.ai.provider;
         if std::env::var(p.default_key_env())
@@ -180,15 +191,12 @@ impl App {
     }
 }
 
+/// Steps through `Provider::ALL`, wrapping around in both directions.
 fn cycle_provider(p: Provider, forward: bool) -> Provider {
-    match (p, forward) {
-        (Provider::Groq, true) => Provider::Anthropic,
-        (Provider::Anthropic, true) => Provider::Openai,
-        (Provider::Openai, true) => Provider::Groq,
-        (Provider::Groq, false) => Provider::Openai,
-        (Provider::Anthropic, false) => Provider::Groq,
-        (Provider::Openai, false) => Provider::Anthropic,
-    }
+    let all = Provider::ALL;
+    let i = all.iter().position(|x| *x == p).unwrap_or(0);
+    let step = if forward { 1 } else { all.len() - 1 };
+    all[(i + step) % all.len()]
 }
 
 fn onoff(b: bool) -> String {
@@ -283,6 +291,13 @@ fn main_keys(app: &mut App, code: KeyCode) -> bool {
                 app.input = Some(app.cfg.ai.model.clone());
                 app.status = t!("Model name then Enter (Esc cancels)");
             }
+            F_ENDPOINT => {
+                app.input = Some(app.cfg.ai.local_endpoint.clone());
+                app.status = t!(
+                    "Local endpoint URL then Enter (empty = {})",
+                    crate::config::DEFAULT_LOCAL_ENDPOINT
+                );
+            }
             F_APIKEY => {
                 app.input = Some(String::new());
                 app.status = t!(
@@ -312,6 +327,11 @@ fn commit_text_field(app: &mut App) {
             app.cfg.ai.model = buf.trim().to_string();
             app.dirty = true;
             app.status = t!("Model updated");
+        }
+        F_ENDPOINT => {
+            app.cfg.ai.local_endpoint = buf.trim().to_string();
+            app.dirty = true;
+            app.status = t!("Local endpoint updated");
         }
         F_APIKEY => {
             if buf.trim().is_empty() {

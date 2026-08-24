@@ -10,6 +10,15 @@ use std::path::PathBuf;
 /// Secrets file permissions (owner read/write only).
 const SECRETS_MODE: u32 = 0o600;
 
+/// Default endpoint of a local OpenAI-compatible runtime (`llama-server`
+/// listens on 8080 and exposes `/v1/chat/completions`).
+pub const DEFAULT_LOCAL_ENDPOINT: &str = "http://127.0.0.1:8080/v1/chat/completions";
+
+/// Placeholder model name for the local runtime: llama.cpp serves whichever
+/// model it was started with and ignores this field, but the OpenAI schema
+/// requires it.
+const LOCAL_DEFAULT_MODEL: &str = "local-model";
+
 /// AI provider for the PKGBUILD diff review.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -17,15 +26,29 @@ pub enum Provider {
     Groq,
     Anthropic,
     Openai,
+    /// A local OpenAI-compatible runtime (llama.cpp `llama-server`, or any
+    /// server speaking the same chat-completions schema). No network call
+    /// leaves the machine; the endpoint is `AiConfig::local_endpoint`.
+    Local,
 }
 
 impl Provider {
-    /// HTTP endpoint of the provider's chat API.
+    /// Every provider, in the order the frontends list them.
+    pub const ALL: [Provider; 4] = [
+        Provider::Groq,
+        Provider::Anthropic,
+        Provider::Openai,
+        Provider::Local,
+    ];
+
+    /// Default HTTP endpoint of the provider's chat API. For `Local` this is
+    /// only the fallback: `AiConfig::endpoint()` honours the configured one.
     pub fn endpoint(&self) -> &'static str {
         match self {
             Provider::Groq => "https://api.groq.com/openai/v1/chat/completions",
             Provider::Anthropic => "https://api.anthropic.com/v1/messages",
             Provider::Openai => "https://api.openai.com/v1/chat/completions",
+            Provider::Local => DEFAULT_LOCAL_ENDPOINT,
         }
     }
 
@@ -35,6 +58,7 @@ impl Provider {
             Provider::Groq => "GROQ_API_KEY",
             Provider::Anthropic => "ANTHROPIC_API_KEY",
             Provider::Openai => "OPENAI_API_KEY",
+            Provider::Local => "AURVETO_LOCAL_API_KEY",
         }
     }
 
@@ -44,7 +68,28 @@ impl Provider {
             Provider::Groq => "openai/gpt-oss-120b",
             Provider::Anthropic => "claude-fable-5",
             Provider::Openai => "gpt-4o",
+            Provider::Local => LOCAL_DEFAULT_MODEL,
         }
+    }
+
+    /// Label shown in the frontends.
+    pub fn label(&self) -> &'static str {
+        match self {
+            Provider::Groq => "Groq",
+            Provider::Anthropic => "Anthropic",
+            Provider::Openai => "OpenAI",
+            Provider::Local => "Local (llama.cpp)",
+        }
+    }
+
+    /// Does this provider run on the user's own machine?
+    pub fn is_local(&self) -> bool {
+        matches!(self, Provider::Local)
+    }
+
+    /// A local runtime needs no account, hence no mandatory API key.
+    pub fn needs_api_key(&self) -> bool {
+        !self.is_local()
     }
 }
 
@@ -60,6 +105,10 @@ pub struct AiConfig {
     /// Env variable holding the API key (empty => provider's default_key_env).
     #[serde(default)]
     pub api_key_env: String,
+    /// Chat-completions URL of the local runtime, used when
+    /// `provider = "local"` (empty => `DEFAULT_LOCAL_ENDPOINT`).
+    #[serde(default)]
+    pub local_endpoint: String,
     /// Total number of votes (including the 1st call) to CONFIRM a block.
     /// A "safe" verdict on the 1st call triggers no extra vote (a single call);
     /// only blocks are confirmed by majority.
@@ -78,6 +127,7 @@ impl Default for AiConfig {
             provider: Provider::Groq,
             model: String::new(),
             api_key_env: String::new(),
+            local_endpoint: String::new(),
             confirm_votes: default_confirm_votes(),
         }
     }
@@ -89,6 +139,17 @@ impl AiConfig {
             self.provider.default_model().to_string()
         } else {
             self.model.clone()
+        }
+    }
+
+    /// Endpoint actually called: the configured local URL for `Local`,
+    /// the provider's fixed endpoint otherwise.
+    pub fn endpoint(&self) -> String {
+        match self.provider {
+            Provider::Local if !self.local_endpoint.trim().is_empty() => {
+                self.local_endpoint.trim().to_string()
+            }
+            p => p.endpoint().to_string(),
         }
     }
 
@@ -259,6 +320,10 @@ pub struct Secrets {
     pub anthropic: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub openai: Option<String>,
+    /// Only needed if the local runtime was started with an API key
+    /// (`llama-server --api-key`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local: Option<String>,
 }
 
 impl Secrets {
@@ -299,6 +364,7 @@ impl Secrets {
             Provider::Groq => self.groq.as_deref(),
             Provider::Anthropic => self.anthropic.as_deref(),
             Provider::Openai => self.openai.as_deref(),
+            Provider::Local => self.local.as_deref(),
         }
     }
 
@@ -309,6 +375,7 @@ impl Secrets {
             Provider::Groq => self.groq = key,
             Provider::Anthropic => self.anthropic = key,
             Provider::Openai => self.openai = key,
+            Provider::Local => self.local = key,
         }
     }
 }
@@ -322,4 +389,47 @@ pub fn resolve_api_key(ai: &AiConfig) -> Option<String> {
         }
     }
     Secrets::load().get(ai.provider).map(|s| s.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn local_endpoint_overrides_only_the_local_provider() {
+        let mut ai = AiConfig {
+            provider: Provider::Local,
+            local_endpoint: "  http://box:9999/v1/chat/completions  ".to_string(),
+            ..AiConfig::default()
+        };
+        assert_eq!(ai.endpoint(), "http://box:9999/v1/chat/completions");
+
+        // Empty (or blank) => the documented local default, not an empty URL.
+        ai.local_endpoint = "   ".to_string();
+        assert_eq!(ai.endpoint(), DEFAULT_LOCAL_ENDPOINT);
+
+        // A cloud provider ignores the local endpoint entirely.
+        ai.provider = Provider::Groq;
+        ai.local_endpoint = "http://box:9999/v1/chat/completions".to_string();
+        assert_eq!(ai.endpoint(), Provider::Groq.endpoint());
+    }
+
+    #[test]
+    fn only_the_local_provider_works_without_an_api_key() {
+        assert!(!Provider::Local.needs_api_key());
+        assert!(Provider::ALL
+            .iter()
+            .filter(|p| **p != Provider::Local)
+            .all(|p| p.needs_api_key()));
+    }
+
+    #[test]
+    fn local_provider_round_trips_through_toml() {
+        let mut cfg = Config::default();
+        cfg.ai.provider = Provider::Local;
+        cfg.ai.local_endpoint = "http://127.0.0.1:8081/v1/chat/completions".to_string();
+        let back: Config = toml::from_str(&toml::to_string_pretty(&cfg).unwrap()).unwrap();
+        assert_eq!(back.ai.provider, Provider::Local);
+        assert_eq!(back.ai.local_endpoint, cfg.ai.local_endpoint);
+    }
 }
