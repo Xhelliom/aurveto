@@ -33,7 +33,8 @@ For each AUR package with an available update:
 4. **Static scan** — delegates to [`aur-scan`](https://github.com/KiefStudioMA/ks-aur-scanner)
    if installed (70+ rules, IOC database). A blocking detection → refusal.
 5. **AI review** — sends the PKGBUILD *diff* to an LLM (Groq / OpenAI /
-   Anthropic, configurable) which judges it `safe / suspect` with justification.
+   Anthropic, or a **local model** served by llama.cpp — configurable) which
+   judges it `safe / suspect` with justification.
 
 Only packages that pass all four steps are offered for installation.
 
@@ -84,15 +85,90 @@ whitelist = ["google-chrome", "zen-browser-bin", "..."]
 
 [ai]
 enabled = true
-provider = "groq"      # groq | anthropic | openai
+provider = "groq"      # groq | anthropic | openai | local
 model = ""              # empty => provider's default model
 api_key_env = ""        # empty => GROQ_API_KEY / ANTHROPIC_API_KEY / OPENAI_API_KEY
+local_endpoint = ""     # provider = "local" only; empty => http://127.0.0.1:8080/v1/chat/completions
 
 [notify]
 enabled = false             # systemd --user timer for desktop notifications
 interval_hours = 6          # check frequency
 silent_when_up_to_date = true
 ```
+
+### Local model (llama.cpp)
+
+`provider = "local"` sends the review to an OpenAI-compatible server running on
+your machine — **no request leaves the host**, and no API key or account is
+needed:
+
+```bash
+# The Arch package is spelled with a dash. ggml-cpu is required even when
+# offloading to a GPU; add the backend for yours (ggml-cuda for NVIDIA,
+# ggml-vulkan / ggml-hip otherwise).
+pacman -S llama-cpp ggml-cpu ggml-cuda
+
+llama-server -m ~/models/Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf \
+  --port 8080 --n-gpu-layers 99
+```
+
+`llama-cpp` is **not installed automatically**: the GUI shows a banner with a
+one-click install when `llama-server` is missing, and a reminder to start it
+when the binary is there but nothing answers. `aurveto config` reports the same
+state on the CLI.
+
+Then set the provider to *Local (llama.cpp)* in the GUI/TUI, or in
+`config.toml`. `local_endpoint` overrides the URL if the server listens
+elsewhere; `model` is ignored by llama.cpp (it serves the model it was started
+with) but is honoured by other OpenAI-compatible runtimes. If the server was
+started with `--api-key`, store that key like any other one (env
+`AURVETO_LOCAL_API_KEY` or `secrets.toml`). Switching back to a cloud provider
+only changes `provider`; nothing else has to be undone.
+
+**Vote policy differs on purpose.** With a cloud provider each call is billed,
+so a `safe` verdict is taken on the first call and only a *block* is put to the
+vote (majority confirms). A local runtime costs nothing per call, and the risk
+profile is reversed — a smaller model missing a real compromise is worse than a
+false alarm. So **every** verdict is voted on and `safe` requires
+**unanimity**: one dissenting vote out of `confirm_votes` blocks the update.
+
+### Measuring a model before trusting it
+
+Model quality is the open question, not the runtime. `tests/bench-model.sh`
+scores a model against the labelled PKGBUILD diffs in `tests/fixtures/`
+(`safe-*` must be allowed, `unsafe-*` must be blocked):
+
+```bash
+cargo build
+tests/bench-model.sh                                    # local, default endpoint
+tests/bench-model.sh http://127.0.0.1:11434/v1/chat/completions qwen3-coder:7b
+PROVIDER=groq tests/bench-model.sh                      # cloud baseline
+```
+
+Measured on an RTX PRO 2000 (8 GB) with **Qwen2.5-Coder-7B-Instruct Q4_K_M**,
+13 fixtures, three consecutive runs:
+
+| votes | false negatives | false positives | wall clock |
+|-------|-----------------|-----------------|------------|
+| 1     | **0**           | 2               | ~40 s (≈3 s/package)  |
+| 3 (unanimity) | **0**   | 2               | ~125 s (≈10 s/package) |
+
+Identical verdicts on all three runs: at `temperature = 0` this model is
+deterministic, so the extra votes cost 3× the time and change nothing *here*.
+They remain the insurance against a noisier model, not a measured gain on this
+one.
+
+Both false positives are on deliberately ambiguous fixtures, and one of them
+exposes a real 7B weakness: on `safe-cdn-migration` the model's own summary
+says *"a CDN is a common practice […] indicating a version bump"* — correct
+reasoning — yet it still returns `safe: false`. A small model does not reliably
+align its boolean with its analysis. Worth trying `response_format` with a JSON
+schema before blaming the prompt.
+
+It exits non-zero on any **false negative** — an `unsafe-*` fixture judged
+safe — because that is the failure that would install a compromise. False
+positives are only reported, they cost friction rather than security. The run
+uses a throwaway config directory and never touches `~/.config/aurveto`.
 
 The API key is **never** stored in `config.toml`. It is resolved from the
 provider's environment variable first, otherwise from a dedicated file
@@ -103,7 +179,7 @@ from the interfaces (GUI/TUI).
 
 The GUI puts **updates on the home page** and groups the settings into a
 separate **full-screen page** (gear button → navigation): delay/mode/helper/scan,
-AI review (provider, **model**, **API key**, votes), the **whitelist** (editing +
+AI review (provider, **model**, **local endpoint**, **API key**, votes), the **whitelist** (editing +
 suggestions from installed AUR packages), and **notifications** (enabling,
 interval). The TUI (`aurveto config-ui`) offers the same settings via keyboard.
 

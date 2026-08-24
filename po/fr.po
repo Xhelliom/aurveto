@@ -675,3 +675,39 @@ msgstr "Installation de {} dans un terminal"
 
 msgid "AUR packages cleared for installation — install one, or all at once via “Update everything”."
 msgstr "Paquets AUR validés — installe-les un par un, ou tous d'un coup via « Tout mettre à jour »."
+
+msgid "Local endpoint"
+msgstr "Endpoint local"
+
+msgid "Local endpoint (empty = {})"
+msgstr "Endpoint local (vide = {})"
+
+msgid "Local endpoint URL then Enter (empty = {})"
+msgstr "URL de l'endpoint local puis Entrée (vide = {})"
+
+msgid "Local endpoint updated"
+msgstr "Endpoint local mis à jour"
+
+msgid "(local provider only)"
+msgstr "(provider local uniquement)"
+
+msgid "{} — blocked, {}/{} local votes flagged it (unanimity required)"
+msgstr "{} — bloqué, {}/{} votes locaux l'ont signalé (unanimité requise)"
+
+msgid "{} is not installed: the local AI review cannot run"
+msgstr "{} n'est pas installé : la review IA locale ne peut pas s'exécuter"
+
+msgid "No local model answering at {} — start it with: {} -m <model.gguf>"
+msgstr "Aucun modèle local ne répond sur {} — lancez-le avec : {} -m <modele.gguf>"
+
+msgid "local runtime"
+msgstr "runtime local"
+
+msgid "{} is not installed"
+msgstr "{} n'est pas installé"
+
+msgid "no server answering at {}"
+msgstr "aucun serveur ne répond sur {}"
+
+msgid "{} (every verdict, unanimity required)"
+msgstr "{} (chaque verdict, unanimité requise)"

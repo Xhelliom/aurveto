@@ -17,9 +17,9 @@ use gtk4::{glib, Adjustment, Orientation, StringList};
 use libadwaita as adw;
 use libadwaita::prelude::*;
 
-use aurveto::config::{Config, DelayMode, Provider, Secrets};
+use aurveto::config::{self, Config, DelayMode, Provider, Secrets};
 use aurveto::pipeline::{self, ChainStep, Decision, Outcome, StepStatus};
-use aurveto::{aur, deploy, scan, t};
+use aurveto::{ai, aur, deploy, scan, t};
 
 const APP_ID: &str = "fr.xhelliom.AurVeto";
 
@@ -129,27 +129,14 @@ fn main() -> glib::ExitCode {
 }
 
 fn provider_index(p: Provider) -> u32 {
-    match p {
-        Provider::Groq => 0,
-        Provider::Anthropic => 1,
-        Provider::Openai => 2,
-    }
+    Provider::ALL.iter().position(|x| *x == p).unwrap_or(0) as u32
 }
 
 fn provider_from_index(i: u32) -> Provider {
-    match i {
-        1 => Provider::Anthropic,
-        2 => Provider::Openai,
-        _ => Provider::Groq,
-    }
-}
-
-fn provider_name(p: Provider) -> &'static str {
-    match p {
-        Provider::Groq => "Groq",
-        Provider::Anthropic => "Anthropic",
-        Provider::Openai => "OpenAI",
-    }
+    Provider::ALL
+        .get(i as usize)
+        .copied()
+        .unwrap_or(Provider::Groq)
 }
 
 // =====================================================================
@@ -202,6 +189,13 @@ fn build_ui(app: &adw::Application) {
         .revealed(scan_binary_missing(&cfg.borrow()))
         .build();
     toolbar.add_top_bar(&scan_banner);
+
+    // Same idea for the local model runtime: a configured-but-unreachable
+    // server turns every AI review into an error, which is only visible deep in
+    // a decision chain. Say it once, at the top.
+    let local_banner = adw::Banner::builder().build();
+    refresh_local_banner(&local_banner, &cfg.borrow());
+    toolbar.add_top_bar(&local_banner);
 
     let page = gtk::Box::builder()
         .orientation(Orientation::Vertical)
@@ -313,12 +307,27 @@ fn build_ui(app: &adw::Application) {
         });
     }
 
-    // A check re-reads whether the scanner appeared since the window opened.
+    // Banner action: install the local runtime through the configured helper.
+    {
+        let cfg = cfg.clone();
+        let overlay = overlay.clone();
+        local_banner.connect_button_clicked(move |_| {
+            let helper = sh_quote(&cfg.borrow().helper);
+            let pkg = ai::LOCAL_RUNTIME_PACKAGE;
+            let _ = launch_in_terminal(&format!("{helper} -S --needed {pkg}"));
+            overlay.add_toast(adw::Toast::new(&t!("Installing {} in a terminal", pkg)));
+        });
+    }
+
+    // A check re-reads whether the scanner / local server appeared since the
+    // window opened.
     {
         let cfg = cfg.clone();
         let scan_banner = scan_banner.clone();
+        let local_banner = local_banner.clone();
         check_btn.connect_clicked(move |_| {
             scan_banner.set_revealed(scan_binary_missing(&cfg.borrow()));
+            refresh_local_banner(&local_banner, &cfg.borrow());
         });
     }
 
@@ -487,6 +496,32 @@ fn scan_binary_missing(cfg: &Config) -> bool {
     cfg.use_aur_scan && !scan::available()
 }
 
+/// Shows why a configured local model cannot answer, and offers the install
+/// only when that is the actual problem — a server merely not started yet is
+/// the user's to launch, not ours to reinstall over.
+fn refresh_local_banner(banner: &adw::Banner, cfg: &Config) {
+    match ai::local_status(&cfg.ai) {
+        ai::LocalStatus::Ready => banner.set_revealed(false),
+        ai::LocalStatus::NotInstalled => {
+            banner.set_title(&t!(
+                "{} is not installed: the local AI review cannot run",
+                ai::LOCAL_RUNTIME_PACKAGE
+            ));
+            banner.set_button_label(Some(&t!("Install")));
+            banner.set_revealed(true);
+        }
+        ai::LocalStatus::NotRunning => {
+            banner.set_title(&t!(
+                "No local model answering at {} — start it with: {} -m <model.gguf>",
+                cfg.ai.endpoint(),
+                ai::LOCAL_RUNTIME_BIN
+            ));
+            banner.set_button_label(None);
+            banner.set_revealed(true);
+        }
+    }
+}
+
 /// Installs a single AUR package by running `aurveto apply <name>` in a
 /// terminal. The CLI re-evaluates the decision chain at install time: this
 /// bypasses no guard, it only narrows to one package.
@@ -566,14 +601,24 @@ fn build_settings_page(
         .title(t!("Enable AI review"))
         .active(cfg.borrow().ai.enabled)
         .build();
+    let provider_labels: Vec<&str> = Provider::ALL.iter().map(|p| p.label()).collect();
     let provider_row = adw::ComboRow::builder()
         .title(t!("Provider"))
-        .model(&StringList::new(&["Groq", "Anthropic", "OpenAI"]))
+        .model(&StringList::new(&provider_labels))
         .selected(provider_index(cfg.borrow().ai.provider))
         .build();
     let model_row = adw::EntryRow::builder()
         .title(t!("Model (empty = provider default)"))
         .text(cfg.borrow().ai.model.as_str())
+        .build();
+    // Only meaningful for the local runtime; hidden for the cloud providers so
+    // the group does not show a URL that will never be called.
+    let endpoint_row = adw::EntryRow::builder()
+        .title(t!(
+            "Local endpoint (empty = {})",
+            config::DEFAULT_LOCAL_ENDPOINT
+        ))
+        .text(cfg.borrow().ai.local_endpoint.as_str())
         .build();
     let key_row = adw::PasswordEntryRow::builder().build();
     let votes_row = adw::SpinRow::builder()
@@ -589,16 +634,21 @@ fn build_settings_page(
         ))
         .build();
     refresh_key_row(&key_row, provider_from_index(provider_row.selected()));
+    endpoint_row.set_visible(cfg.borrow().ai.provider == Provider::Local);
     {
-        // Update the key label when the provider changes.
+        // Update the key label and the endpoint visibility when the provider changes.
         let key_row = key_row.clone();
+        let endpoint_row = endpoint_row.clone();
         provider_row.connect_selected_notify(move |row| {
-            refresh_key_row(&key_row, provider_from_index(row.selected()));
+            let p = provider_from_index(row.selected());
+            refresh_key_row(&key_row, p);
+            endpoint_row.set_visible(p == Provider::Local);
         });
     }
     ai.add(&ai_row);
     ai.add(&provider_row);
     ai.add(&model_row);
+    ai.add(&endpoint_row);
     ai.add(&key_row);
     ai.add(&votes_row);
 
@@ -679,6 +729,7 @@ fn build_settings_page(
                 c.ai.enabled = ai_row.is_active();
                 c.ai.provider = provider;
                 c.ai.model = model_row.text().trim().to_string();
+                c.ai.local_endpoint = endpoint_row.text().trim().to_string();
                 c.ai.confirm_votes = votes_row.value() as u32;
                 c.notify.enabled = notif_row.is_active();
                 c.notify.interval_hours = interval_row.value() as u64;
@@ -726,7 +777,7 @@ fn refresh_key_row(key_row: &adw::PasswordEntryRow, provider: Provider) {
     } else {
         t!("not set")
     };
-    key_row.set_title(&t!("{} API key — {}", provider_name(provider), state));
+    key_row.set_title(&t!("{} API key — {}", provider.label(), state));
 }
 
 /// Whitelist editing group: current packages (removal) + add field + suggestions
