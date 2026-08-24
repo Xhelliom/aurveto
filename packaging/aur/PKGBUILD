@@ -1,6 +1,6 @@
 # Maintainer: Xhelliom
 pkgname=aurveto
-pkgver=0.5.0
+pkgver=0.6.0
 pkgrel=1
 pkgdesc="Security gate for AUR updates: delay, whitelist, static scan and AI review of the PKGBUILD diff"
 arch=('x86_64' 'aarch64')
