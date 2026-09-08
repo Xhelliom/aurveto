@@ -57,6 +57,12 @@ msgstr "échec makepkg pour {}"
 msgid "error {}: {}"
 msgstr "erreur {} : {}"
 
+msgid "sudo authentication failed — update not started"
+msgstr "authentification sudo échouée — mise à jour non lancée"
+
+msgid "sudo authentication failed — nothing installed"
+msgstr "authentification sudo échouée — rien n’a été installé"
+
 msgid "the helper returned an error"
 msgstr "le helper a renvoyé une erreur"
 

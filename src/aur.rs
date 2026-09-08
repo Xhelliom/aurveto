@@ -353,6 +353,42 @@ fn parse_version(pkgbuild: &str) -> String {
     }
 }
 
+/// Helper name whose non-interactive flags differ from yay's.
+const HELPER_PARU: &str = "paru";
+
+/// Flags that stop an AUR helper from asking again what the decision chain has
+/// already settled. `--noconfirm` alone is not enough: yay's diff / edit / clean
+/// menus and paru's review pager still stop mid-run waiting for a keypress —
+/// and they are enabled by the helper's own config file, not by our command
+/// line, so the answers have to be pinned explicitly.
+pub fn helper_install_args(helper: &str) -> &'static [&'static str] {
+    if helper == HELPER_PARU {
+        &["--needed", "--noconfirm", "--skipreview"]
+    } else {
+        &[
+            "--needed",
+            "--noconfirm",
+            "--answerdiff=None",
+            "--answeredit=None",
+            "--answerclean=None",
+        ]
+    }
+}
+
+/// Installs the latest version of `names` through the configured AUR helper.
+/// Non-interactive by design: every package handed here was already cleared by
+/// the decision chain, so a second round of prompts only invites a blind "yes".
+/// Returns true if the helper succeeded.
+pub fn install_latest(helper: &str, names: &[String]) -> Result<bool> {
+    let status = Command::new(helper)
+        .arg("-S")
+        .args(helper_install_args(helper))
+        .args(names)
+        .status()
+        .with_context(|| format!("launching {helper}"))?;
+    Ok(status.success())
+}
+
 /// Builds and installs the deferred revision (checkout + makepkg -si).
 /// Returns true if the installation succeeded.
 pub fn install_lagged(target: &LagTarget) -> Result<bool> {

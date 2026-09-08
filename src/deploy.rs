@@ -26,6 +26,10 @@ const GETTEXT_DOMAIN: &str = "aurveto";
 const NOTIFY_UNIT: &str = "aurveto-notify";
 /// Delay after boot before the first check.
 const NOTIFY_BOOT_DELAY: &str = "2min";
+/// How often the `sudo` timestamp is refreshed during an install run. Well
+/// under the default 15-minute `timestamp_timeout`, so even a long build never
+/// lets the session expire.
+const SUDO_REFRESH: std::time::Duration = std::time::Duration::from_secs(60);
 
 /// Desktop entry and icon, embedded in the binary so the `install` command is
 /// self-contained (no need for the source tree at runtime).
@@ -270,6 +274,39 @@ pub fn send_test_notification() {
         "aurveto",
         &t!("Test notification — if you see this, notifications work."),
     );
+}
+
+/// Opens a `sudo` session covering a whole install run: asks for the password
+/// **once**, then keeps the timestamp warm in the background so no later
+/// `pacman`, `makepkg -si` or AUR helper call prompts again. An update that
+/// asks for the password three times is an update the user stops reading.
+///
+/// The refresher is a detached thread, started at most once per process: it
+/// lives exactly as long as the run. Returns `false` if `sudo` is missing or
+/// authentication failed — the caller decides whether to go on.
+pub fn open_sudo_session() -> bool {
+    let authenticated = Command::new("sudo")
+        .arg("-v")
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if !authenticated {
+        return false;
+    }
+    static REFRESHER: std::sync::Once = std::sync::Once::new();
+    REFRESHER.call_once(|| {
+        std::thread::spawn(|| loop {
+            std::thread::sleep(SUDO_REFRESH);
+            // `-n` never prompts: a lost timestamp just fails quietly here and
+            // the next real command asks for the password itself.
+            let _ = Command::new("sudo")
+                .args(["-n", "-v"])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
+        });
+    });
+    true
 }
 
 /// Writes a file, creating its parent directories as needed.
