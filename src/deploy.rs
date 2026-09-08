@@ -128,11 +128,23 @@ fn installed_binary(name: &str) -> String {
         .unwrap_or_else(|| name.to_string())
 }
 
-/// Command to use to launch the `aurveto` CLI binary, as an absolute path when
-/// it is installed. Intended for frontends that start the CLI in an external
-/// terminal whose PATH does not include `~/.local/bin`.
+/// Path of `name` sitting next to the running binary, if it is there.
+fn sibling_binary(name: &str) -> Option<String> {
+    let path = std::env::current_exe().ok()?.parent()?.join(name);
+    path.exists().then(|| path.display().to_string())
+}
+
+/// Command to use to launch the `aurveto` CLI binary, as an absolute path.
+/// Intended for frontends that start the CLI in an external terminal whose PATH
+/// does not include `~/.local/bin`.
+///
+/// The CLI **next to the running frontend** wins: a GUI must drive the CLI of
+/// its own build. Resolving through `~/.local/bin` or the PATH first lets a
+/// freshly built GUI silently talk to an older installed CLI, which then
+/// rejects the flags the GUI sends it — a failure that surfaces as an
+/// incomprehensible usage error in the terminal, long after the click.
 pub fn cli_command() -> String {
-    installed_binary(BIN_CLI)
+    sibling_binary(BIN_CLI).unwrap_or_else(|| installed_binary(BIN_CLI))
 }
 
 /// Installs the desktop entry and icon into `~/.local/share`.
