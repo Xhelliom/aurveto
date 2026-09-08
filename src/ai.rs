@@ -24,6 +24,9 @@ const CHAT_PATH: &str = "/chat/completions";
 const MODELS_PATH: &str = "/models";
 /// A probe must not stall the UI: the server is on localhost or nowhere.
 const PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(1500);
+/// How much of a provider's error body is kept: enough for its message, not so
+/// much that a stack of HTML floods the frontends' chain step.
+const MAX_ERROR_BODY: usize = 300;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Verdict {
@@ -251,7 +254,7 @@ fn call_openai_compatible(
     }
     let resp: serde_json::Value = req
         .send_json(body)
-        .context("chat-completions API call")?
+        .map_err(|e| http_error("chat-completions API call", e))?
         .into_json()
         .context("parsing chat-completions response")?;
     resp["choices"][0]["message"]["content"]
@@ -276,13 +279,28 @@ fn call_anthropic(endpoint: &str, api_key: &str, model: &str, user_msg: &str) ->
         .set("anthropic-version", ANTHROPIC_VERSION)
         .set("Content-Type", "application/json")
         .send_json(body)
-        .context("Anthropic API call")?
+        .map_err(|e| http_error("Anthropic API call", e))?
         .into_json()
         .context("parsing Anthropic response")?;
     resp["content"][0]["text"]
         .as_str()
         .map(|s| s.to_string())
         .ok_or_else(|| anyhow!("missing text field in the Anthropic response"))
+}
+
+/// Turns a provider failure into an error carrying the server's own words. A
+/// bare status ("status 429") never says whether the key expired, the credits
+/// ran out or the model was decommissioned — which is exactly what the user
+/// needs to read in the frontends when the review stops happening.
+fn http_error(what: &str, e: ureq::Error) -> anyhow::Error {
+    match e {
+        ureq::Error::Status(code, resp) => {
+            let body = resp.into_string().unwrap_or_default();
+            let body: String = body.trim().chars().take(MAX_ERROR_BODY).collect();
+            anyhow!("{what}: HTTP {code} — {body}")
+        }
+        e => anyhow!("{what}: {e}"),
+    }
 }
 
 /// Extracts the first valid JSON object from the text returned by the model.
