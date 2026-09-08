@@ -39,7 +39,11 @@ pub fn trf(msgid: &str, args: &[String]) -> String {
 #[macro_export]
 macro_rules! t {
     ($id:literal) => { $crate::i18n::tr($id) };
-    ($id:literal, $($arg:expr),+ $(,)?) => {
-        $crate::i18n::trf($id, &[$(($arg).to_string()),+])
-    };
+    ($id:literal, $($arg:expr),+ $(,)?) => {{
+        // Bound to a local rather than passed as `&[...]`: on a single `&str`
+        // argument clippy reads the array literal as a needless clone and
+        // suggests `slice::from_ref`, which cannot express the N-argument case.
+        let args = [$(($arg).to_string()),+];
+        $crate::i18n::trf($id, &args)
+    }};
 }
