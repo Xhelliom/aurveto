@@ -6,7 +6,7 @@
 use anyhow::Result;
 use aurveto::aur::SECS_PER_DAY;
 use aurveto::pipeline::{Decision, Outcome};
-use aurveto::{ai, aur, config, pipeline, scan, t};
+use aurveto::{ai, aur, config, deploy, pipeline, scan, t};
 use clap::{Parser, Subcommand};
 use std::process::Command;
 
@@ -103,11 +103,11 @@ fn run() -> Result<()> {
         Cmd::Install => cmd_install(),
         Cmd::Notify { test } => {
             if test {
-                aurveto::deploy::send_test_notification();
+                deploy::send_test_notification();
                 Ok(())
             } else {
                 let cfg = config::Config::load_or_init()?;
-                aurveto::deploy::send_notification(&cfg)
+                deploy::send_notification(&cfg)
             }
         }
         Cmd::ReviewFile { path } => cmd_review_file(&path),
@@ -178,6 +178,10 @@ fn print_official_summary() {
 
 /// Update the official repos then the safe AUR packages.
 fn cmd_upgrade(explain: bool) -> Result<()> {
+    // One password for the whole run: pacman, then makepkg -si and the helper.
+    if !deploy::open_sudo_session() {
+        anyhow::bail!(t!("sudo authentication failed — update not started"));
+    }
     println!("=== {} ===", t!("Official repositories (pacman -Syu)"));
     let status = Command::new("sudo").args(["pacman", "-Syu"]).status()?;
     if !status.success() {
@@ -262,9 +266,20 @@ fn cmd_apply(dry_run: bool, only: &[String], explain: bool) -> Result<()> {
             );
         }
         if !latest.is_empty() {
-            println!("(dry-run) {} -S {}", cfg.helper, latest.join(" "));
+            println!(
+                "(dry-run) {} -S {} {}",
+                cfg.helper,
+                aur::helper_install_args(&cfg.helper).join(" "),
+                latest.join(" ")
+            );
         }
         return Ok(());
+    }
+
+    // Both paths below need root (makepkg -si, then the helper): authenticate
+    // once here rather than once per package.
+    if !deploy::open_sudo_session() {
+        anyhow::bail!(t!("sudo authentication failed — nothing installed"));
     }
 
     for o in &lag {
@@ -284,11 +299,8 @@ fn cmd_apply(dry_run: bool, only: &[String], explain: bool) -> Result<()> {
             Err(e) => eprintln!("  {}", t!("error {}: {}", o.update.name, e)),
         }
     }
-    if !latest.is_empty() {
-        let status = Command::new(&cfg.helper).arg("-S").args(&latest).status()?;
-        if !status.success() {
-            anyhow::bail!(t!("the helper returned an error"));
-        }
+    if !latest.is_empty() && !aur::install_latest(&cfg.helper, &latest)? {
+        anyhow::bail!(t!("the helper returned an error"));
     }
     Ok(())
 }
@@ -401,13 +413,13 @@ fn cmd_config() -> Result<()> {
 fn cmd_install() -> Result<()> {
     let cfg = config::Config::load_or_init()?;
 
-    let gui_available = aurveto::deploy::install_binaries()?;
+    let gui_available = deploy::install_binaries()?;
     println!("{}", t!("Binaries installed in ~/.local/bin."));
 
     // The menu entry launches the GUI: only install it when the GUI is
     // available, otherwise the shortcut would point to nothing.
     if gui_available {
-        aurveto::deploy::install_desktop_entry()?;
+        deploy::install_desktop_entry()?;
         println!("{}", t!("Desktop entry and icon installed."));
     } else {
         println!(
@@ -416,10 +428,10 @@ fn cmd_install() -> Result<()> {
         );
     }
 
-    aurveto::deploy::install_locales()?;
+    deploy::install_locales()?;
     println!("{}", t!("Translations installed."));
 
-    aurveto::deploy::apply_notify(&cfg.notify)?;
+    deploy::apply_notify(&cfg.notify)?;
     if cfg.notify.enabled {
         println!(
             "{}",
