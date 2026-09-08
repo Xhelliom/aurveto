@@ -141,7 +141,7 @@ fn cmd_review_file(path: &str) -> Result<()> {
             cfg.ai.confirm_votes
         )
     );
-    let v = ai::review_diff(&cfg.ai, path, &content)?;
+    let v = ai::review_diff(&cfg.ai, path, &content, None)?;
     println!("  {:<10}: {}", t!("safe"), v.safe);
     println!("  {:<10}: {}", t!("severity"), v.severity);
     println!("  {:<10}: {}", t!("summary"), v.summary);

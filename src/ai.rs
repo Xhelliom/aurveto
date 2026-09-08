@@ -38,6 +38,10 @@ pub struct Verdict {
     pub summary: String,
 }
 
+/// Introduces the static scanner's findings inside the user message, so the
+/// model knows they come from another tool and are exactly what it must weigh.
+const SCAN_CONTEXT_HEADER: &str = "Findings reported by the static scanner (aur-scan):";
+
 const SYSTEM_PROMPT: &str =
     "You are a security auditor specialised in Arch Linux PKGBUILDs and the AUR. \
 You are given the diff (or the contents) of a PKGBUILD and its scripts. Your role is to \
@@ -55,6 +59,11 @@ a new pre/post install hook running remote code, obfuscated or encoded code \
 (base64/eval/xxd), exfiltration (sending files, env variables, keys) over the network, \
 unexpected addition of npm/pip dependencies installed at build time with lifecycle hooks. \
 \
+When the static scanner's findings are quoted below, assess each one: say plainly \
+whether the PKGBUILD supports it or whether it looks like a pattern-matching false \
+positive (a legitimate vendor domain, a packaging convention such as a -bin package \
+declaring `provides`), and explain why in the summary. \
+\
 Rely only on what the diff shows. Reply ONLY with a JSON object, with no surrounding text: \
 {\"safe\": bool, \"severity\": \"low|medium|high|critical\", \"summary\": \"...\"}. \
 Set safe=false only if there is a real indicator from the \"truly suspicious\" list.";
@@ -71,9 +80,14 @@ Set safe=false only if there is a real indicator from the \"truly suspicious\" l
 ///   false negative (missing a real compromise) is the failure mode that
 ///   matters here, and the majority rule would let it through on the 1st call.
 ///   Fail-closed: one dissenting vote blocks.
-pub fn review_diff(cfg: &AiConfig, pkg: &str, diff: &str) -> Result<Verdict> {
+pub fn review_diff(
+    cfg: &AiConfig,
+    pkg: &str,
+    diff: &str,
+    scan_findings: Option<&str>,
+) -> Result<Verdict> {
     let votes = cfg.confirm_votes.max(1);
-    let first = review_once(cfg, pkg, diff)?;
+    let first = review_once(cfg, pkg, diff, scan_findings)?;
     let is_local = cfg.provider.is_local();
 
     // Nothing to confirm: multi-vote disabled, or a cloud "safe" verdict.
@@ -89,7 +103,7 @@ pub fn review_diff(cfg: &AiConfig, pkg: &str, diff: &str) -> Result<Verdict> {
         Some(first.clone())
     };
     for _ in 1..votes {
-        match review_once(cfg, pkg, diff) {
+        match review_once(cfg, pkg, diff, scan_findings) {
             Ok(v) => {
                 total += 1;
                 if !v.safe {
@@ -201,8 +215,15 @@ fn blocked_by_votes(is_local: bool, unsafe_count: u32, total: u32) -> bool {
     }
 }
 
-/// A single call to the model, returning a Verdict.
-fn review_once(cfg: &AiConfig, pkg: &str, diff: &str) -> Result<Verdict> {
+/// A single call to the model, returning a Verdict. `scan_findings` carries
+/// what the static scanner reported, so the model can weigh in on it rather
+/// than re-discover it.
+fn review_once(
+    cfg: &AiConfig,
+    pkg: &str,
+    diff: &str,
+    scan_findings: Option<&str>,
+) -> Result<Verdict> {
     // A local runtime needs no account; a key is only used if the server was
     // started with one.
     let api_key = crate::config::resolve_api_key(cfg);
@@ -215,9 +236,13 @@ fn review_once(cfg: &AiConfig, pkg: &str, diff: &str) -> Result<Verdict> {
     }
     let model = cfg.model_or_default();
 
-    let user_msg = format!(
-        "Package: {pkg}\nAnalyse this PKGBUILD diff and return your JSON verdict:\n\n{diff}"
-    );
+    let mut user_msg = format!("Package: {pkg}\n");
+    if let Some(findings) = scan_findings.filter(|f| !f.trim().is_empty()) {
+        user_msg.push_str(&format!("{SCAN_CONTEXT_HEADER}\n{findings}\n"));
+    }
+    user_msg.push_str(&format!(
+        "Analyse this PKGBUILD diff and return your JSON verdict:\n\n{diff}"
+    ));
 
     let endpoint = cfg.endpoint();
     let raw = match cfg.provider {

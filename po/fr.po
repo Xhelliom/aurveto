@@ -649,6 +649,12 @@ msgstr "non vérifié — aucun garde-fou n’a pu inspecter cette révision"
 msgid "no diff to review"
 msgstr "aucun diff à examiner"
 
+msgid "confirms the block — {}"
+msgstr "confirme le blocage — {}"
+
+msgid "2nd opinion (does not lift the block) — {}"
+msgstr "2e avis (ne lève pas le blocage) — {}"
+
 msgid "aur-scan: nothing to report"
 msgstr "aur-scan : rien à signaler"
 

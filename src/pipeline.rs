@@ -261,7 +261,9 @@ fn vet(
 ) -> (Decision, Option<String>, Vec<ChainStep>) {
     let mut steps = vec![scan_step(cfg, scan)];
     if let ScanResult::Flagged(detail) = scan {
-        return (Decision::Blocked(t!("aur-scan: {}", detail)), None, steps);
+        let (step, note) = second_opinion(cfg, name, diff, detail);
+        steps.push(step);
+        return (Decision::Blocked(t!("aur-scan: {}", detail)), note, steps);
     }
     // A guard enabled in the config but unable to run returned no verdict: the
     // revision stays uninspected, and an uninspected revision is a doubt.
@@ -269,7 +271,7 @@ fn vet(
     let mut ai_unavailable = false;
 
     if cfg.ai.enabled && !diff.trim().is_empty() {
-        match ai::review_diff(&cfg.ai, name, diff) {
+        match ai::review_diff(&cfg.ai, name, diff, None) {
             Ok(v) if !v.safe => {
                 steps.push(ChainStep::new(
                     t!("AI review"),
@@ -326,6 +328,61 @@ fn vet(
         );
     }
     (Decision::Allow, None, steps)
+}
+
+/// The AI review as a **second opinion** on a static-scan block: it receives the
+/// scanner's findings and says whether the PKGBUILD supports them, but it can
+/// never lift the block. A pattern matcher has false positives (a substring hit
+/// on a legitimate domain, a `-bin` package declaring `provides`), and the user
+/// needs to read an argument before overriding by hand — while an automatic
+/// override would mean a model that can be talked out of a detection, which is
+/// exactly what an attacker would aim for. Fail-closed stays fail-closed.
+/// Returns the chain step and, when a verdict actually came back, the
+/// reviewer's own words for `Outcome::ai_note` — so `--explain` and the
+/// "[AI reviewed]" tag stay truthful on a blocked package too.
+fn second_opinion(
+    cfg: &Config,
+    name: &str,
+    diff: &str,
+    findings: &str,
+) -> (ChainStep, Option<String>) {
+    let step_name = t!("AI review");
+    let skipped = |note| {
+        (
+            ChainStep::new(step_name.clone(), StepStatus::Skipped, note),
+            None,
+        )
+    };
+    if !cfg.ai.enabled {
+        return skipped(t!("disabled"));
+    }
+    if diff.trim().is_empty() {
+        return skipped(t!("no diff to review"));
+    }
+    match ai::review_diff(&cfg.ai, name, diff, Some(findings)) {
+        // The model corroborates: the block is not a scanner artefact.
+        Ok(v) if !v.safe => (
+            ChainStep::new(
+                step_name,
+                StepStatus::Failed,
+                t!("confirms the block — {}", v.summary),
+            ),
+            Some(v.summary),
+        ),
+        // The model disagrees: informational only, hence the neutral status.
+        Ok(v) => (
+            ChainStep::new(
+                step_name,
+                StepStatus::Skipped,
+                t!("2nd opinion (does not lift the block) — {}", v.summary),
+            ),
+            Some(v.summary),
+        ),
+        Err(e) => {
+            eprintln!("  (AI second opinion unavailable for {name}: {e:#})");
+            skipped(t!("review unavailable: {}", format!("{e:#}")))
+        }
+    }
 }
 
 /// Builds the static-scan chain step from its result.
