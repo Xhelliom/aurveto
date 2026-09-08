@@ -44,6 +44,10 @@ const DOT_SIZE: i32 = 9;
 const LOGO_SIZE: i32 = 30;
 /// Side of a decision-chain step bullet (px).
 const BULLET_SIZE: i32 = 18;
+/// Response ids of the "install anyway" confirmation. Cancel is both the
+/// default and the close response, so Enter and Escape can only back out.
+const RESPONSE_CANCEL: &str = "cancel";
+const RESPONSE_FORCE: &str = "force";
 /// How many pending packages the "on hold" list shows before folding the rest
 /// behind a "+N more" reveal — matches the mock's compact list.
 const VISIBLE_WAITING: usize = 2;
@@ -97,6 +101,8 @@ button.ag-toggler:hover { background: transparent; }
 
 button.ag-install { background-color: #161513; background-image: none; color: #ffffff; border: none; border-radius: 7px; padding: 7px 14px; font-weight: 600; box-shadow: none; }
 button.ag-install:hover { background-color: #2c2a27; }
+button.ag-force { background-color: transparent; background-image: none; color: #b02a28; border: 1px solid rgba(200,49,47,0.35); border-radius: 7px; padding: 6px 12px; font-size: 12px; font-weight: 600; box-shadow: none; }
+button.ag-force:hover { background-color: rgba(200,49,47,0.08); }
 
 /* ---- decision chain ---- */
 .ag-chain { border-top: 1px dashed rgba(20,20,18,0.13); padding-top: 14px; margin-top: 14px; }
@@ -446,7 +452,7 @@ fn render(
     if !blocked.is_empty() {
         let (sec, content) = section(&t!("Blocked"), blocked.len(), "", true);
         for o in &blocked {
-            content.append(&blocked_card(o));
+            content.append(&blocked_card(o, overlay));
         }
         results.append(&sec);
     }
@@ -525,10 +531,48 @@ fn refresh_local_banner(banner: &adw::Banner, cfg: &Config) {
 /// Installs a single AUR package by running `aurveto apply <name>` in a
 /// terminal. The CLI re-evaluates the decision chain at install time: this
 /// bypasses no guard, it only narrows to one package.
-fn install_one(name: &str, overlay: &adw::ToastOverlay) {
+///
+/// `force` adds `--force`, which the CLI honours **only** for a package the
+/// chain blocked. It is reached from the confirmation dialog alone, never from
+/// a single click.
+fn install_one(name: &str, overlay: &adw::ToastOverlay, force: bool) {
     let cli = sh_quote(&deploy::cli_command());
-    let _ = launch_in_terminal(&format!("{cli} apply {}", sh_quote(name)));
+    let flag = if force { " --force" } else { "" };
+    let _ = launch_in_terminal(&format!("{cli} apply{flag} {}", sh_quote(name)));
     overlay.add_toast(adw::Toast::new(&t!("Installing {} in a terminal", name)));
+}
+
+/// Confirmation before overriding a block. The reason is repeated in the
+/// dialog: an override the user cannot re-read at the moment of deciding is an
+/// override made blind, which is exactly what the guardrail exists to prevent.
+fn confirm_forced_install(
+    anchor: &gtk::Widget,
+    name: &str,
+    reason: &str,
+    overlay: &adw::ToastOverlay,
+) {
+    let dialog = adw::AlertDialog::new(
+        Some(&t!("Install {} anyway?", name)),
+        Some(&t!(
+            "The security chain blocked this revision:\n\n{}\n\nInstalling it bypasses the guard. Only go on if you have read the reason and judged it a false positive.",
+            reason
+        )),
+    );
+    dialog.add_response(RESPONSE_CANCEL, &t!("Cancel"));
+    dialog.add_response(RESPONSE_FORCE, &t!("Install anyway"));
+    dialog.set_response_appearance(RESPONSE_FORCE, adw::ResponseAppearance::Destructive);
+    // Both defaults point at "cancel": Enter and Escape must never install.
+    dialog.set_default_response(Some(RESPONSE_CANCEL));
+    dialog.set_close_response(RESPONSE_CANCEL);
+
+    let name = name.to_string();
+    let overlay = overlay.clone();
+    dialog.connect_response(None, move |_, response| {
+        if response == RESPONSE_FORCE {
+            install_one(&name, &overlay, true);
+        }
+    });
+    dialog.present(Some(anchor));
 }
 
 /// Wires the "Update everything" button: runs `aurveto upgrade` in a terminal
@@ -1325,7 +1369,7 @@ fn package_card(o: &Outcome, overlay: &adw::ToastOverlay, expanded: bool) -> gtk
     {
         let name = o.update.name.clone();
         let overlay = overlay.clone();
-        install.connect_clicked(move |_| install_one(&name, &overlay));
+        install.connect_clicked(move |_| install_one(&name, &overlay, false));
     }
 
     let head = gtk::Box::new(Orientation::Horizontal, 12);
@@ -1341,8 +1385,10 @@ fn package_card(o: &Outcome, overlay: &adw::ToastOverlay, expanded: bool) -> gtk
 }
 
 /// A blocked package as a card: name, the block reason, a red "blocked" pill,
-/// and the (failed) decision chain shown below.
-fn blocked_card(o: &Outcome) -> gtk::Box {
+/// the (failed) decision chain, and an override button. The scanner is a
+/// pattern matcher and does produce false positives, so the user keeps the
+/// last word on their own machine — behind a confirmation, never one click.
+fn blocked_card(o: &Outcome, overlay: &adw::ToastOverlay) -> gtk::Box {
     let reason = match &o.decision {
         Decision::Blocked(r) => r.clone(),
         _ => String::new(),
@@ -1356,9 +1402,25 @@ fn blocked_card(o: &Outcome) -> gtk::Box {
     text.append(&name);
     text.append(&sub);
 
+    let force = gtk::Button::builder()
+        .label(t!("Install anyway"))
+        .css_classes(["ag-force"])
+        .valign(gtk::Align::Center)
+        .build();
+    {
+        let name = o.update.name.clone();
+        let reason = reason.clone();
+        let overlay = overlay.clone();
+        let anchor = force.clone();
+        force.connect_clicked(move |_| {
+            confirm_forced_install(anchor.upcast_ref::<gtk::Widget>(), &name, &reason, &overlay);
+        });
+    }
+
     let head = gtk::Box::new(Orientation::Horizontal, 12);
     head.append(&text);
     head.append(&pill(&t!("blocked"), "ag-pill-blocked"));
+    head.append(&force);
 
     let chain = gtk::Box::new(Orientation::Vertical, 9);
     chain.add_css_class("ag-chain");
