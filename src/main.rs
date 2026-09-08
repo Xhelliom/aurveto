@@ -43,6 +43,10 @@ enum Cmd {
         /// Show the AI reviewer's explanation for each reviewed package.
         #[arg(long)]
         explain: bool,
+        /// Install the named packages even though the chain BLOCKED them.
+        /// Requires explicit names; never applies to a delayed package.
+        #[arg(long)]
+        force: bool,
     },
     /// Update EVERYTHING: official repos (pacman -Syu) then safe AUR packages.
     Upgrade {
@@ -96,7 +100,8 @@ fn run() -> Result<()> {
             dry_run,
             packages,
             explain,
-        } => cmd_apply(dry_run, &packages, explain),
+            force,
+        } => cmd_apply(dry_run, &packages, explain, force),
         Cmd::Upgrade { explain } => cmd_upgrade(explain),
         Cmd::Status => cmd_status(),
         Cmd::Config => cmd_config(),
@@ -188,27 +193,38 @@ fn cmd_upgrade(explain: bool) -> Result<()> {
         anyhow::bail!(t!("pacman -Syu failed — AUR update not started"));
     }
     println!("\n=== {} ===", t!("AUR packages (aurveto security chain)"));
-    cmd_apply(false, &[], explain)
+    cmd_apply(false, &[], explain, false)
 }
 
 /// Restricts the cleared set to the explicitly requested package names.
 ///
-/// Selection only ever *narrows* what the decision chain already cleared: a
-/// requested package the chain did not allow (delayed, blocked, or not even a
-/// pending update) is reported and skipped — never forced. Fail-closed.
+/// Selection only ever *narrows* what the decision chain already cleared —
+/// except under `force`, which is the user overriding their own machine's
+/// guardrail on a **named, blocked** package. A delayed package is never
+/// forcible: no revision has been vetted yet, so there is nothing to override.
+/// Fail-closed otherwise.
 fn select_requested<'a>(
     outcomes: &'a [Outcome],
     allow: Vec<&'a Outcome>,
     requested: &[String],
+    force: bool,
 ) -> Vec<&'a Outcome> {
     requested
         .iter()
         .filter_map(|name| {
             if let Some(o) = allow.iter().find(|o| &o.update.name == name) {
-                Some(*o)
-            } else {
-                let known = outcomes.iter().any(|o| &o.update.name == name);
-                if known {
+                return Some(*o);
+            }
+            let known = outcomes.iter().find(|o| &o.update.name == name);
+            match known {
+                Some(o) if force && matches!(o.decision, Decision::Blocked(_)) => {
+                    eprintln!(
+                        "{}",
+                        t!("⚠ FORCED — {} was blocked, installing anyway", name)
+                    );
+                    Some(o)
+                }
+                Some(_) => {
                     eprintln!(
                         "{}",
                         t!(
@@ -216,16 +232,23 @@ fn select_requested<'a>(
                             name
                         )
                     );
-                } else {
-                    eprintln!("{}", t!("Skipping {} — no pending update", name));
+                    None
                 }
-                None
+                None => {
+                    eprintln!("{}", t!("Skipping {} — no pending update", name));
+                    None
+                }
             }
         })
         .collect()
 }
 
-fn cmd_apply(dry_run: bool, only: &[String], explain: bool) -> Result<()> {
+fn cmd_apply(dry_run: bool, only: &[String], explain: bool, force: bool) -> Result<()> {
+    // An override is always aimed at a package the user named. Blanket-forcing
+    // whatever the chain rejected would defeat the point of having a chain.
+    if force && only.is_empty() {
+        anyhow::bail!(t!("--force requires the package names to install"));
+    }
     let cfg = config::Config::load_or_init()?;
     let outcomes = pipeline::evaluate(&cfg)?;
     print_report(&cfg, &outcomes, explain);
@@ -235,7 +258,7 @@ fn cmd_apply(dry_run: bool, only: &[String], explain: bool) -> Result<()> {
         .filter(|o| o.decision == Decision::Allow)
         .collect();
     if !only.is_empty() {
-        allow = select_requested(&outcomes, allow, only);
+        allow = select_requested(&outcomes, allow, only, force);
     }
     if allow.is_empty() {
         println!("\n{}", t!("Nothing to install."));

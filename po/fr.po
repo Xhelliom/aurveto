@@ -661,6 +661,36 @@ msgstr "confirme le blocage — {}"
 msgid "2nd opinion (does not lift the block) — {}"
 msgstr "2e avis (ne lève pas le blocage) — {}"
 
+msgid "⚠ FORCED — {} was blocked, installing anyway"
+msgstr "⚠ FORCÉ — {} était bloqué, installation quand même"
+
+msgid "--force requires the package names to install"
+msgstr "--force exige les noms des paquets à installer"
+
+msgid "Install anyway"
+msgstr "Installer quand même"
+
+msgid "Cancel"
+msgstr "Annuler"
+
+msgid "Install {} anyway?"
+msgstr "Installer {} quand même ?"
+
+msgid ""
+"The security chain blocked this revision:\n"
+"\n"
+"{}\n"
+"\n"
+"Installing it bypasses the guard. Only go on if you have read the reason and "
+"judged it a false positive."
+msgstr ""
+"La chaîne de sécurité a bloqué cette révision :\n"
+"\n"
+"{}\n"
+"\n"
+"L’installer contourne le garde-fou. Ne continue que si tu as lu la raison et "
+"jugé qu’il s’agit d’un faux positif."
+
 msgid "aur-scan: nothing to report"
 msgstr "aur-scan : rien à signaler"
 
