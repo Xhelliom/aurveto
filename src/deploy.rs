@@ -130,8 +130,18 @@ fn installed_binary(name: &str) -> String {
 
 /// Path of `name` sitting next to the running binary, if it is there.
 fn sibling_binary(name: &str) -> Option<String> {
-    let path = std::env::current_exe().ok()?.parent()?.join(name);
+    let exe = std::env::current_exe().ok()?;
+    let exe_name = exe.file_name()?.to_str()?;
+    let path = exe.parent()?.join(sibling_name(exe_name, name));
     path.exists().then(|| path.display().to_string())
+}
+
+/// A renamed GUI build keeps its suffix on the CLI it pairs with:
+/// `aurveto-gui-dev` drives `aurveto-dev`, not the packaged `aurveto` that a
+/// bare name would resolve to — the GUI would silently run another version.
+fn sibling_name(gui_exe_name: &str, name: &str) -> String {
+    let suffix = gui_exe_name.strip_prefix(BIN_GUI).unwrap_or("");
+    format!("{name}{suffix}")
 }
 
 /// Command to use to launch the `aurveto` CLI binary, as an absolute path.
@@ -350,4 +360,15 @@ fn notify_send(urgency: &str, title: &str, body: &str) {
     let _ = Command::new("notify-send")
         .args(["-u", urgency, title, body])
         .status();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_renamed_gui_pairs_with_the_same_renamed_cli() {
+        assert_eq!(sibling_name("aurveto-gui-dev", BIN_CLI), "aurveto-dev");
+        assert_eq!(sibling_name("aurveto-gui", BIN_CLI), "aurveto");
+    }
 }
