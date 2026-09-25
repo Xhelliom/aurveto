@@ -127,19 +127,31 @@ pub fn scan_revision(target: &Path, baselines: &[&Path], enabled: bool) -> ScanR
         .map(|b| scan_tree(b).unwrap_or_default())
         .collect();
     let fresh = new_findings(&found, &known);
-    let summarize = |list: &[&Finding]| {
-        list.iter()
-            .map(|f| f.summary())
-            .collect::<Vec<_>>()
-            .join("\n")
-    };
     if !fresh.is_empty() {
-        return ScanResult::Flagged(summarize(&fresh));
+        return ScanResult::Flagged(summarize(fresh.iter().map(|f| f.summary())));
     }
     if found.is_empty() {
         return ScanResult::Clean;
     }
-    ScanResult::Known(summarize(&found.iter().collect::<Vec<_>>()))
+    ScanResult::Known(summarize(found.iter().map(Finding::summary)))
+}
+
+/// One line per distinct finding, in first-seen order; a rule matching several
+/// lines of the same file shows once with its count (`×2`), since the frontends
+/// display the text and repeated identical lines read as noise.
+fn summarize(lines: impl Iterator<Item = String>) -> String {
+    let mut distinct: Vec<(String, usize)> = Vec::new();
+    for line in lines {
+        match distinct.iter_mut().find(|(l, _)| *l == line) {
+            Some((_, n)) => *n += 1,
+            None => distinct.push((line, 1)),
+        }
+    }
+    distinct
+        .into_iter()
+        .map(|(l, n)| if n > 1 { format!("{l} ×{n}") } else { l })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 enum ScanError {
@@ -390,6 +402,12 @@ mod tests {
             dependency_findings("app", "app [HIGH] x"),
             ScanResult::Clean
         );
+    }
+
+    #[test]
+    fn summarize_counts_repeated_lines() {
+        let lines = ["a", "b", "a"].map(String::from).into_iter();
+        assert_eq!(summarize(lines), "a ×2\nb");
     }
 
     #[test]

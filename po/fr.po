@@ -694,8 +694,8 @@ msgstr ""
 msgid "aur-scan: nothing to report"
 msgstr "aur-scan : rien à signaler"
 
-msgid "aur-scan: nothing new since the installed version ({})"
-msgstr "aur-scan : rien de nouveau depuis la version installée ({})"
+msgid "aur-scan: nothing new since the installed version:\n{}"
+msgstr "aur-scan : rien de nouveau depuis la version installée :\n{}"
 
 msgid "aur-scan unavailable"
 msgstr "aur-scan indisponible"

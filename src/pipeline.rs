@@ -400,7 +400,7 @@ fn scan_step(cfg: &Config, scan: &ScanResult) -> ChainStep {
         ScanResult::Known(detail) => (
             StepStatus::Passed,
             t!(
-                "aur-scan: nothing new since the installed version ({})",
+                "aur-scan: nothing new since the installed version:\n{}",
                 detail
             ),
         ),
