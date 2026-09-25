@@ -2,12 +2,13 @@
 //! whitelist -> delay (hold or lag) -> static scan -> AI review.
 
 use crate::ai;
-use crate::aur::{self, LagTarget, PkgInfo, Update};
+use crate::aur::{self, LagTarget, PkgInfo, RevisionTree, Update};
 use crate::config::{Config, DelayMode};
 use crate::scan::{self, ScanResult};
 use crate::t;
 use anyhow::Result;
 use std::collections::HashMap;
+use std::path::Path;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Decision {
@@ -99,12 +100,15 @@ fn evaluate_one(
 ) -> Outcome {
     let whitelisted = cfg.is_whitelisted(&upd.name);
     let info = infos.get(&upd.name);
+    let pkgbase = info
+        .map(|i| i.package_base.clone())
+        .unwrap_or_else(|| upd.name.clone());
     let age_days = info.map(|i| now.saturating_sub(i.last_modified) / aur::SECS_PER_DAY);
 
     // Trusted package: target the LATEST version, delay skipped, but the
     // scan + AI review still apply.
     if whitelisted {
-        return decide_latest(cfg, upd, age_days, true);
+        return decide_latest(cfg, upd, &pkgbase, age_days, true);
     }
 
     match cfg.delay_mode {
@@ -115,9 +119,9 @@ fn evaluate_one(
             if fresh {
                 return delayed(upd, age_days, (eligible_at(info, threshold), None));
             }
-            decide_latest(cfg, upd, age_days, false)
+            decide_latest(cfg, upd, &pkgbase, age_days, false)
         }
-        DelayMode::Lag => evaluate_lag(cfg, upd, info, age_days, now, threshold),
+        DelayMode::Lag => evaluate_lag(cfg, upd, &pkgbase, info, age_days, now, threshold),
     }
 }
 
@@ -125,20 +129,18 @@ fn evaluate_one(
 fn evaluate_lag(
     cfg: &Config,
     upd: Update,
+    pkgbase: &str,
     info: Option<&PkgInfo>,
     age_days: Option<u64>,
     now: u64,
     threshold: u64,
 ) -> Outcome {
-    let pkgbase = info
-        .map(|i| i.package_base.clone())
-        .unwrap_or_else(|| upd.name.clone());
     let before = now.saturating_sub(threshold);
 
-    let target = match aur::lagged_target(&pkgbase, before) {
+    let target = match aur::lagged_target(pkgbase, before) {
         // Package too young to have existed N days ago: it will mature → datable.
         Ok(None) => {
-            let elig = lag_eligible(&pkgbase, &upd.old_ver, threshold, info);
+            let elig = lag_eligible(pkgbase, &upd.old_ver, threshold, info);
             return delayed(upd, age_days, elig);
         }
         Ok(Some(t)) => t,
@@ -158,7 +160,7 @@ fn evaluate_lag(
     // Are we already up to date (or ahead) relative to the D-N target? If so,
     // the only available update is more recent than the delay → datable.
     if aur::vercmp(&target.version, &upd.old_ver) <= 0 {
-        let elig = lag_eligible(&pkgbase, &upd.old_ver, threshold, info);
+        let elig = lag_eligible(pkgbase, &upd.old_ver, threshold, info);
         return delayed(upd, age_days, elig);
     }
 
@@ -186,7 +188,7 @@ fn evaluate_lag(
     }
 
     // Static scan + AI review on THE REVISION we will install.
-    let scan = scan_lagged(&upd.name, &target.pkgbuild, cfg.use_aur_scan);
+    let scan = scan_revision(cfg, &upd.name, pkgbase, &upd.old_ver, &target.commit);
     let diff = if cfg.ai.enabled {
         aur::diff_against_installed(&upd.name, &upd.old_ver, &target.pkgbuild)
     } else {
@@ -208,8 +210,14 @@ fn evaluate_lag(
 }
 
 /// Decision targeting the latest version (whitelist, or hold after maturation).
-fn decide_latest(cfg: &Config, upd: Update, age_days: Option<u64>, whitelisted: bool) -> Outcome {
-    let scan = scan::scan_package(&upd.name, cfg.use_aur_scan);
+fn decide_latest(
+    cfg: &Config,
+    upd: Update,
+    pkgbase: &str,
+    age_days: Option<u64>,
+    whitelisted: bool,
+) -> Outcome {
+    let scan = scan_latest(cfg, &upd.name, pkgbase, &upd.old_ver);
     let diff = if cfg.ai.enabled {
         aur::pkgbuild_diff(&upd.name, &upd.old_ver).unwrap_or_default()
     } else {
@@ -267,7 +275,7 @@ fn vet(
     }
     // A guard enabled in the config but unable to run returned no verdict: the
     // revision stays uninspected, and an uninspected revision is a doubt.
-    let scan_unavailable = cfg.use_aur_scan && *scan == ScanResult::Skipped;
+    let scan_unavailable = cfg.use_aur_scan && !scan.inspected();
     let mut ai_unavailable = false;
 
     if cfg.ai.enabled && !diff.trim().is_empty() {
@@ -320,7 +328,7 @@ fn vet(
     // Fail-closed: reaching here means nothing actually inspected this
     // revision's contents. A guard skipped by choice is the user's call; one
     // that was asked for and could not run must never read as "safe".
-    if *scan != ScanResult::Clean && (scan_unavailable || ai_unavailable) {
+    if !scan.inspected() && (scan_unavailable || ai_unavailable) {
         return (
             Decision::Blocked(t!("unverified — no guard could inspect this revision")),
             None,
@@ -389,6 +397,13 @@ fn second_opinion(
 fn scan_step(cfg: &Config, scan: &ScanResult) -> ChainStep {
     let (status, note) = match scan {
         ScanResult::Clean => (StepStatus::Passed, t!("aur-scan: nothing to report")),
+        ScanResult::Known(detail) => (
+            StepStatus::Passed,
+            t!(
+                "aur-scan: nothing new since the installed version ({})",
+                detail
+            ),
+        ),
         ScanResult::Flagged(detail) => (StepStatus::Failed, t!("aur-scan: {}", detail)),
         ScanResult::Skipped if cfg.use_aur_scan => {
             (StepStatus::Skipped, t!("aur-scan unavailable"))
@@ -458,19 +473,64 @@ fn delayed(upd: Update, age_days: Option<u64>, eligible: (Option<u64>, Option<St
     o
 }
 
-/// Static scan of a lag revision: we write the PKGBUILD to a temporary file
-/// and pass it to `aur-scan scan`.
-fn scan_lagged(name: &str, pkgbuild: &str, enabled: bool) -> ScanResult {
-    if !enabled {
+/// Static scan of the exact revision `commit` of `pkgbase` — the one that will
+/// be installed — judged against the installed version's revision(s).
+fn scan_revision(
+    cfg: &Config,
+    name: &str,
+    pkgbase: &str,
+    installed: &str,
+    commit: &str,
+) -> ScanResult {
+    if !cfg.use_aur_scan {
         return ScanResult::Skipped;
     }
-    let path = std::env::temp_dir().join(format!("aurveto-{name}.PKGBUILD"));
-    if std::fs::write(&path, pkgbuild).is_err() {
+    let target = match aur::export_revision(pkgbase, commit) {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("  (cannot export {name} for the scan: {e:#})");
+            return ScanResult::Skipped;
+        }
+    };
+    let baselines = installed_trees(name, pkgbase, installed);
+    let paths: Vec<&Path> = baselines.iter().map(RevisionTree::path).collect();
+    scan::scan_revision(target.path(), &paths, true)
+}
+
+/// Static scan for the latest version: the current AUR HEAD, plus its AUR
+/// dependency tree (which has no installed baseline). Only findings absent
+/// from the `installed` version block.
+pub fn scan_latest(cfg: &Config, name: &str, pkgbase: &str, installed: &str) -> ScanResult {
+    if !cfg.use_aur_scan {
         return ScanResult::Skipped;
     }
-    let res = scan::scan_pkgbuild_file(&path, enabled);
-    let _ = std::fs::remove_file(&path);
-    res
+    match aur::head_commit(pkgbase) {
+        Ok(head) => scan::merge(
+            scan_revision(cfg, name, pkgbase, installed, &head),
+            scan::scan_dependencies(name, true),
+        ),
+        Err(e) => {
+            eprintln!("  (git unavailable for {name}, not scanned: {e:#})");
+            ScanResult::Skipped
+        }
+    }
+}
+
+/// Exported trees of every revision carrying the installed version. All or
+/// nothing: a partial set would shrink the intersection's constraints and so
+/// widen what counts as "already installed".
+fn installed_trees(name: &str, pkgbase: &str, installed: &str) -> Vec<RevisionTree> {
+    aur::installed_revisions(pkgbase, installed)
+        .and_then(|commits| {
+            commits
+                .iter()
+                .map(|c| aur::export_revision(pkgbase, c))
+                .collect::<Result<Vec<_>>>()
+        })
+        .unwrap_or_else(|e| {
+            eprintln!("  (no installed baseline for {name}, every finding counts: {e:#})");
+            Vec::new()
+        })
 }
 
 /// List of allowed names (all Allow decisions combined).

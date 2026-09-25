@@ -298,6 +298,16 @@ pub fn ensure_git_repo(pkgbase: &str) -> Result<PathBuf> {
     Ok(dir)
 }
 
+/// The pkgbase's AUR repository as already cached (cloned if absent, but not
+/// re-fetched): for the steps that follow a fetch within the same evaluation.
+fn cached_repo(pkgbase: &str) -> Result<PathBuf> {
+    let dir = aur_cache_dir()?.join(pkgbase);
+    if dir.join(".git").exists() {
+        return Ok(dir);
+    }
+    ensure_git_repo(pkgbase)
+}
+
 /// Determines the revision that was HEAD before `before_epoch`.
 pub fn lagged_target(pkgbase: &str, before_epoch: u64) -> Result<Option<LagTarget>> {
     let dir = ensure_git_repo(pkgbase)?;
@@ -448,10 +458,7 @@ pub struct NextUpgrade {
 /// version is indeed the one that will be installed. Reuses the already-present
 /// git repository (no fetch); called after `lagged_target`.
 pub fn next_upgrade(pkgbase: &str, installed: &str) -> Result<Option<NextUpgrade>> {
-    let dir = aur_cache_dir()?.join(pkgbase);
-    if !dir.join(".git").exists() {
-        ensure_git_repo(pkgbase)?;
-    }
+    let dir = cached_repo(pkgbase)?;
     // Commits from newest to oldest, with their commit date (%ct).
     let log = run_git(&dir, &["log", "--format=%H %ct", "origin/HEAD"])
         .or_else(|_| run_git(&dir, &["log", "--format=%H %ct", "master"]))?;
@@ -478,6 +485,92 @@ pub fn next_upgrade(pkgbase: &str, installed: &str) -> Result<Option<NextUpgrade
         }
     }
     Ok(candidate)
+}
+
+/// Commits whose PKGBUILD carries exactly the `installed` version: the
+/// revisions the user may have built. Several when the maintainer pushed a fix
+/// without bumping `pkgrel` — we cannot tell which one was installed, so the
+/// caller must trust only what they all share. Empty when unknown (VCS version,
+/// rewritten history, version older than `MAX_UPGRADE_SCAN` commits).
+pub fn installed_revisions(pkgbase: &str, installed: &str) -> Result<Vec<String>> {
+    let dir = cached_repo(pkgbase)?;
+    let log = run_git(&dir, &["log", "--format=%H", "origin/HEAD"])
+        .or_else(|_| run_git(&dir, &["log", "--format=%H", "origin/master"]))?;
+    let mut found = Vec::new();
+    for commit in log.lines().take(MAX_UPGRADE_SCAN) {
+        let pkgbuild = run_git(&dir, &["show", &format!("{commit}:PKGBUILD")]).unwrap_or_default();
+        let version = parse_version(&pkgbuild);
+        if version == DYNAMIC_VERSION {
+            continue;
+        }
+        match vercmp(&version, installed) {
+            0 => found.push(commit.to_string()),
+            c if c < 0 => break, // walked past the installed version
+            _ => {}
+        }
+    }
+    Ok(found)
+}
+
+/// Current HEAD commit of the pkgbase's AUR repository (freshly fetched): the
+/// revision a helper installs when it takes the latest version.
+pub fn head_commit(pkgbase: &str) -> Result<String> {
+    let dir = ensure_git_repo(pkgbase)?;
+    let commit = run_git(&dir, &["rev-parse", "origin/HEAD"])
+        .or_else(|_| run_git(&dir, &["rev-parse", "origin/master"]))?;
+    Ok(commit.trim().to_string())
+}
+
+/// A revision's files exported to a temporary directory, deleted on drop.
+pub struct RevisionTree {
+    dir: PathBuf,
+}
+
+impl RevisionTree {
+    /// Directory holding the revision's files (PKGBUILD, install scripts…).
+    pub fn path(&self) -> &Path {
+        &self.dir
+    }
+}
+
+impl Drop for RevisionTree {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.dir);
+    }
+}
+
+/// Name of the transient archive `export_revision` unpacks.
+const EXPORT_ARCHIVE: &str = "revision.tar";
+
+/// Exports **every** file of `commit` (not just the PKGBUILD: install scripts
+/// and patches are where payloads hide) so a scanner sees what makepkg builds.
+pub fn export_revision(pkgbase: &str, commit: &str) -> Result<RevisionTree> {
+    let repo = cached_repo(pkgbase)?;
+    let dir = std::env::temp_dir().join(format!("aurveto-{pkgbase}-{commit}"));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
+    let tree = RevisionTree { dir };
+    let archive = tree.dir.join(EXPORT_ARCHIVE);
+    let archive_arg = archive.to_string_lossy().to_string();
+    run_git(
+        &repo,
+        &["archive", "--format=tar", "-o", &archive_arg, commit],
+    )?;
+    let out = Command::new("tar")
+        .arg("-xf")
+        .arg(&archive)
+        .arg("-C")
+        .arg(&tree.dir)
+        .output()
+        .context("tar")?;
+    if !out.status.success() {
+        bail!(
+            "unpacking {commit}: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
+    }
+    std::fs::remove_file(&archive).context("removing the export archive")?;
+    Ok(tree)
 }
 
 /// Remote code execution / reverse shell patterns in a PKGBUILD.
@@ -516,10 +609,7 @@ fn danger_signatures(pkgbuild: &str) -> Vec<&'static str> {
 ///   B. a dangerous execution pattern present in the target revision has
 ///      disappeared from the current HEAD (a sign of post-incident cleanup).
 pub fn reverted_since(pkgbase: &str, commit: &str) -> Result<Option<String>> {
-    let dir = aur_cache_dir()?.join(pkgbase);
-    if !dir.join(".git").exists() {
-        ensure_git_repo(pkgbase)?;
-    }
+    let dir = cached_repo(pkgbase)?;
     let target = run_git(&dir, &["show", &format!("{commit}:PKGBUILD")]).unwrap_or_default();
     let head = run_git(&dir, &["show", "origin/HEAD:PKGBUILD"])
         .or_else(|_| run_git(&dir, &["show", "master:PKGBUILD"]))

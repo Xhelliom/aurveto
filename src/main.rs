@@ -79,6 +79,13 @@ enum Cmd {
         /// Target commit hash.
         commit: String,
     },
+    /// (debug) Static-scan a package's latest AUR revision against an installed version.
+    ScanCheck {
+        /// Package name (also used as its pkgbase).
+        name: String,
+        /// Installed version (epoch:pkgver-pkgrel) serving as the baseline.
+        installed: String,
+    },
     /// Open the settings UI in the terminal (TUI).
     #[cfg(feature = "tui")]
     ConfigUi,
@@ -124,6 +131,12 @@ fn run() -> Result<()> {
                     t!("✅ revision not reverted since (nothing suspicious)")
                 ),
             }
+            Ok(())
+        }
+        Cmd::ScanCheck { name, installed } => {
+            let cfg = config::Config::load_or_init()?;
+            let result = pipeline::scan_latest(&cfg, &name, &name, &installed);
+            println!("{result:?}");
             Ok(())
         }
         #[cfg(feature = "tui")]
@@ -501,7 +514,7 @@ fn print_report(cfg: &config::Config, outcomes: &[Outcome], explain: bool) {
                 } else {
                     t!("✅ allowed")
                 };
-                if matches!(o.scan, scan::ScanResult::Clean) {
+                if matches!(o.scan, scan::ScanResult::Clean | scan::ScanResult::Known(_)) {
                     format!("{base} {}", t!("[scan ok]"))
                 } else {
                     base
