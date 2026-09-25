@@ -444,7 +444,11 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
     };
     let title = Paragraph::new(header)
         .style(Style::default().add_modifier(Modifier::BOLD))
-        .block(Block::default().borders(Borders::ALL));
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(format!(" v{} ", crate::VERSION)),
+        );
     f.render_widget(title, chunks[0]);
 
     match app.screen {

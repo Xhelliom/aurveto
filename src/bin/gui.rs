@@ -174,6 +174,10 @@ fn build_ui(app: &adw::Application) {
     let title = gtk::Label::new(Some("aurveto"));
     title.add_css_class("ag-title");
     brand.append(&title);
+    let version = gtk::Label::new(Some(&format!("v{}", aurveto::VERSION)));
+    version.add_css_class("dim-label");
+    version.add_css_class("caption");
+    brand.append(&version);
     header.pack_start(&brand);
 
     let settings_btn = gtk::Button::builder()
